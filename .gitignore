@@ -19,3 +19,7 @@ yarn-error.log*
 .DS_Store
 /uploads
 /server/extracted-text.txt
+
+# User data - exclude PDFs and IPYNBs
+*.pdf
+*.ipynb
