@@ -105,7 +105,28 @@ const assignmentSchema = new mongoose.Schema({
     enum: ['separate_file', 'assignment_pdf', 'assignment_pdf_failed', 'not_available'],
     default: 'not_available'
   },
-  rubricExtractionNotes: String
+  rubricExtractionNotes: String,
+  // Orchestration tracking - integrates assignment, rubric, and solution
+  orchestrationStatus: {
+    type: String,
+    enum: ['pending', 'processing', 'completed', 'failed', 'not_needed'],
+    default: 'not_needed'  // Changed from 'pending' - orchestration disabled by default
+  },
+  orchestrationStartedAt: Date,
+  orchestrationCompletedAt: Date,
+  orchestrationError: String,
+  // Integrated data after orchestration validation
+  orchestratedData: mongoose.Schema.Types.Mixed,
+  // Validation results from orchestration
+  validationResults: {
+    hasIssues: { type: Boolean, default: false },
+    missingRubricForQuestions: [String],
+    extraRubricCriteria: [String],
+    missingSolutionForQuestions: [String],
+    inconsistentQuestionNumbers: [String],
+    warnings: [String],
+    suggestions: [String]
+  }
 });
 
 const Assignment = mongoose.model('Assignment', assignmentSchema);

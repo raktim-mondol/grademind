@@ -146,6 +146,7 @@ const rubricProcessingQueue = new MemoryQueue('rubricProcessing');
 const solutionProcessingQueue = new MemoryQueue('solutionProcessing');
 const submissionProcessingQueue = new MemoryQueue('submissionProcessing');
 const evaluationQueue = new MemoryQueue('evaluation');
+const orchestrationQueue = new MemoryQueue('orchestration');
 
 // Set up queue events for logging
 const setupQueueEvents = (queue) => {
@@ -168,6 +169,7 @@ setupQueueEvents(rubricProcessingQueue);
 setupQueueEvents(solutionProcessingQueue);
 setupQueueEvents(submissionProcessingQueue);
 setupQueueEvents(evaluationQueue);
+setupQueueEvents(orchestrationQueue);
 
 module.exports = {
   assignmentProcessingQueue,
@@ -175,4 +177,5 @@ module.exports = {
   solutionProcessingQueue,
   submissionProcessingQueue,
   evaluationQueue,
+  orchestrationQueue,
 };

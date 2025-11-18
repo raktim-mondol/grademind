@@ -77,6 +77,7 @@ if (process.env.NODE_ENV !== 'test') {
   require('./workers/submissionProcessor');
   require('./workers/evaluationProcessor');
   require('./workers/projectProcessor'); // Added project processor
+  require('./workers/orchestrationProcessor'); // Added orchestration processor
   
   console.log('Document processing workers initialized');
 }

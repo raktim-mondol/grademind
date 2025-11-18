@@ -132,6 +132,26 @@ evaluationQueue.process(async (job) => {
     
     console.log(`Evaluating submission ${submissionId} using file: ${filePathForEvaluation}`);
     
+    // Fetch orchestrated data from the assignment if available
+    let orchestratedData = null;
+    if (assignmentId) {
+      try {
+        const Assignment = require('../models/assignment').Assignment;
+        const assignment = await Assignment.findById(assignmentId);
+        if (assignment && assignment.orchestratedData) {
+          orchestratedData = assignment.orchestratedData;
+          console.log(`Using orchestrated data for evaluation:`);
+          console.log(`  - Validation status: ${orchestratedData.validation?.isValid ? 'VALID' : 'HAS ISSUES'}`);
+          console.log(`  - Completeness: ${orchestratedData.validation?.completenessScore || 0}%`);
+          console.log(`  - Integrated questions: ${orchestratedData.integratedStructure?.questions?.length || 0}`);
+        } else {
+          console.log(`No orchestrated data available for assignment ${assignmentId}`);
+        }
+      } catch (orchError) {
+        console.warn(`Could not fetch orchestrated data:`, orchError.message);
+      }
+    }
+    
     // Use the unified evaluation approach - .ipynb files will be converted to PDF internally
     const { evaluateSubmission } = require('../utils/geminiService');
     const evaluationResult = await evaluateSubmission(
@@ -139,7 +159,8 @@ evaluationQueue.process(async (job) => {
       rubricData,
       solutionData,
       filePathForEvaluation,
-      studentId
+      studentId,
+      orchestratedData  // Pass orchestrated data to evaluation
     );
     
     // Make sure we have the raw score and total possible score

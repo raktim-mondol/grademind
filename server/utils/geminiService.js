@@ -27,7 +27,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Model configuration
 const model = genAI.getGenerativeModel({
-  model: "gemini-2.5-pro", // Use the Pro model for better evaluation quality
+  model: process.env.GEMINI_MODEL || "gemini-2.5-pro", // Use environment variable with fallback
   generationConfig: {
     temperature: 0.2, // Lower temperature for more deterministic grading
     maxOutputTokens: 65536, // Maximum output tokens for Gemini 2.5 Pro
@@ -178,7 +178,7 @@ async function getGeminiResponse(prompt, jsonResponse = false) {
   try {
     // Configure the model for this specific request
     const modelConfig = genAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
         temperature: jsonResponse ? 0.1 : 0.4, // Lower temperature for JSON responses
         maxOutputTokens: 65536,
@@ -222,11 +222,12 @@ async function getGeminiResponse(prompt, jsonResponse = false) {
  * @param {Object} solutionData - Processed solution data
  * @param {string} submissionFilePath - Path to the student's submission file (PDF or .ipynb)
  * @param {string} studentId - ID of the student who made the submission
+ * @param {Object} orchestratedData - Optional orchestrated validation and mapping data
  * @returns {Promise<Object>} - Evaluation results with feedback and grades
  * 
  * Note: PDF files are sent directly to Gemini API. .ipynb files are converted to PDF first.
  */
-async function evaluateSubmission(assignmentData, rubricData, solutionData, submissionFilePath, studentId) {
+async function evaluateSubmission(assignmentData, rubricData, solutionData, submissionFilePath, studentId, orchestratedData = null) {
   try {
     // Check if proper data exists (rubricData is optional)
     if (!assignmentData || !submissionFilePath) {
@@ -317,6 +318,14 @@ async function evaluateSubmission(assignmentData, rubricData, solutionData, subm
     const textPromptPart = `
 You are an automated assignment grading assistant. Your task is to evaluate the student's submission provided as a ${fileTypeDescription} against the assignment requirements, grading rubric, model solution, and the specific question structure provided below. 
 
+⚠️ **CRITICAL REQUIREMENT - READ THIS FIRST:**
+You MUST provide DETAILED SUBSECTION-LEVEL grading for EVERY SINGLE QUESTION in the criteriaGrades array.
+- If a question has subsections (e.g., 1a, 1b, 1c), you MUST create SEPARATE criteriaGrade entries for EACH subsection
+- If a question has NO subsections, you MUST still create at least ONE criteriaGrade entry for that question
+- NEVER summarize multiple subsections into one entry
+- NEVER skip any questions
+This is NOT optional - it is MANDATORY for every submission.
+
 ${originalFileType === '.ipynb' ? 
   'This submission was originally a Jupyter notebook containing code cells, markdown explanations, and execution outputs, which has been converted to PDF format. Analyze all content including code, explanations, outputs, plots, and any visual elements.' :
   'This is a PDF document submission. Analyze the entire content of the document including text, images, tables, charts, graphs, code snippets, mathematical expressions, diagrams, and any visual elements.'
@@ -328,8 +337,9 @@ Description: ${assignmentData.description || "No description provided"}
 ${questionStructureText}
 
 GRADING RUBRIC:
+${rubricCriteria.length > 0 ? '**A DETAILED GRADING RUBRIC HAS BEEN PROVIDED - THIS IS THE PRIMARY GRADING STANDARD**' : ''}
 Total Points: ${totalPossibleScore}
-${rubricCriteria.length > 0 ? `Grading Criteria: ${rubricCriteria.length} criteria found` : "No specific grading criteria found"}
+${rubricCriteria.length > 0 ? `Grading Criteria: ${rubricCriteria.length} criteria found - EACH MUST BE APPLIED` : "No specific grading criteria found - derive from assignment instructions"}
 ${questionRubricText}
 ${criteriaQuestionMappingText}
 
@@ -341,6 +351,65 @@ ${solutionData && Object.keys(solutionData).length > 0 && !solutionData.processi
 STUDENT INFORMATION:
 Student ID: ${studentId || 'Not provided'}
 
+${orchestratedData ? `
+ORCHESTRATION INSIGHTS (INTEGRATED GRADING STRUCTURE):
+This assignment has been analyzed for consistency and completeness. Use the following insights to guide your evaluation:
+
+Validation Status:
+- Overall Status: ${orchestratedData.validation?.isValid ? '✓ VALID' : '⚠ HAS ISSUES'}
+- Completeness Score: ${orchestratedData.validation?.completenessScore || 0}%
+- Questions with Rubric Mapping: ${orchestratedData.statistics?.questionsWithRubric || 0}/${orchestratedData.statistics?.totalQuestions || 0}
+- Questions with Solution: ${orchestratedData.statistics?.questionsWithSolution || 0}/${orchestratedData.statistics?.totalQuestions || 0}
+
+${orchestratedData.validation?.issues && orchestratedData.validation.issues.length > 0 ? `
+Known Issues to Be Aware Of:
+${orchestratedData.validation.issues.map((issue, idx) => 
+  `${idx + 1}. [${issue.severity?.toUpperCase()}] ${issue.message}${issue.affectedQuestions && issue.affectedQuestions.length > 0 ? ` (Questions: ${issue.affectedQuestions.join(', ')})` : ''}`
+).join('\n')}
+` : ''}
+
+${orchestratedData.recommendations && orchestratedData.recommendations.length > 0 ? `
+Grading Recommendations:
+${orchestratedData.recommendations.map((rec, idx) => 
+  `${idx + 1}. [${rec.priority?.toUpperCase()}] ${rec.recommendation}`
+).join('\n')}
+` : ''}
+
+INTEGRATED QUESTION STRUCTURE (Use this as your primary grading guide):
+${orchestratedData.integratedStructure?.questions ? 
+  orchestratedData.integratedStructure.questions.map(q => {
+    let questionInfo = `
+Question ${q.number}: ${q.text}
+- Total Points: ${q.points}
+- Requirements: ${q.requirements && q.requirements.length > 0 ? q.requirements.join('; ') : 'See assignment description'}`;
+    
+    if (q.rubricCriteria && q.rubricCriteria.length > 0) {
+      questionInfo += `
+- Rubric Criteria (${q.rubricCriteria.length} criteria):
+${q.rubricCriteria.map((c, idx) => 
+  `  ${idx + 1}. ${c.name} (Weight: ${c.weight || 'N/A'})
+     Description: ${c.description || 'N/A'}
+     ${c.markingScale ? `Marking Scale: ${c.markingScale}` : ''}`
+).join('\n')}`;
+    }
+    
+    if (q.solution?.available) {
+      questionInfo += `
+- Solution Available: Yes
+  Summary: ${q.solution.summary || 'See full solution'}
+  Key Points: ${q.solution.keyPoints && q.solution.keyPoints.length > 0 ? q.solution.keyPoints.join('; ') : 'See solution details'}`;
+    } else {
+      questionInfo += `
+- Solution Available: No - Use assignment requirements for grading`;
+    }
+    
+    return questionInfo;
+  }).join('\n---\n')
+  : 'No integrated structure available - use raw assignment/rubric data'}
+
+**IMPORTANT**: The integrated structure above combines assignment questions, rubric criteria, and solutions into a unified grading guide. Use this structure as your PRIMARY reference for grading each question.
+` : ''}
+
 EVALUATION INSTRUCTIONS:
 1. Analyze the attached ${fileTypeDescription} which contains the student's submission.
 2. **Pay close attention to ALL content, including text, code, outputs, figures, images, charts, graphs, tables, mathematical expressions, and diagrams.**
@@ -351,10 +420,13 @@ EVALUATION INSTRUCTIONS:
 4. The TOTAL maximum score for this assignment is ${totalPossibleScore} points.
 5. Grade EXACTLY according to the provided question structure and point values.
 6. Each question or subquestion must receive a score matching its defined point value in the question structure.
-7. Follow the rubric criteria for each question, referencing all content (text, code, visuals, outputs).
-8. When available, use the question-to-criteria mappings provided.
+7. ${rubricCriteria.length > 0 ? 
+    '**IMPORTANT: A grading rubric has been provided. You MUST follow the rubric criteria strictly for each question. Use the specific criteria descriptions, marking scales, and point distributions defined in the rubric. Reference all content (text, code, visuals, outputs) when applying the rubric criteria.**' : 
+    'Since no explicit rubric is provided, derive grading criteria from the assignment instructions and question descriptions. Create appropriate evaluation criteria based on what each question is asking for.'
+  }
+8. ${rubricCriteria.length > 0 ? '**CRITICAL: Use the question-to-criteria mappings provided in the rubric. Each criterion is mapped to specific question(s) and must be applied accordingly with the specified weights.**' : 'Base your grading criteria on standard expectations for the type of questions asked (e.g., correctness, completeness, clarity, code quality, explanation depth).'}
 9. Do NOT convert scores to percentages. Use the raw scores exactly as specified.
-10. Provide detailed feedback for each question/subquestion, referencing the rubric and solution where applicable.
+10. Provide detailed feedback for each question/subquestion${rubricCriteria.length > 0 ? ', **explicitly referencing which rubric criteria were met or not met**' : ''}${solutionData && Object.keys(solutionData).length > 0 && !solutionData.processing_error ? ' and comparing with the model solution' : ''} where applicable.
 11. ${originalFileType === '.ipynb' ? 
     'Include assessment of code implementation, execution results, documentation quality, and any visualizations. Consider the logical flow of the notebook and the quality of outputs.' :
     'Include assessment of written explanations, code implementations (if any), mathematical work, diagrams, and any visual elements in your feedback. Describe what you observe in the document.'
@@ -363,15 +435,73 @@ EVALUATION INSTRUCTIONS:
 13. Provide a list of strengths observed in the submission (considering all content).
 14. Provide a list of areas for improvement (considering all content).
 15. Provide concrete suggestions for the student.
+${rubricCriteria.length > 0 ? '\n**REMINDER: When a rubric is provided, it is the PRIMARY grading standard. All scores and feedback must align with the rubric criteria.**' : ''}
 
 OUTPUT REQUIREMENTS:
 Provide your response ONLY as a valid JSON object matching the requested structure. The JSON object must include:
 - "overallGrade": <number> (Sum of scores, cannot exceed totalPossibleScore)
 - "totalPossible": <number> (The total possible score: ${totalPossibleScore})
-- "criteriaGrades": Array of objects, each with "questionNumber" (string), "criterionName" (string), "score" (number), "maxScore" (number), "feedback" (string).
-- "strengths": Array of strings.
-- "areasForImprovement": Array of strings.
-- "suggestions": Array of strings.
+- "criteriaGrades": Array of objects with MANDATORY subsection breakdown for EVERY question. Each object must have:
+  * "questionNumber": <string> (e.g., "1", "2", "1a", "1b")
+  * "criterionName": <string> (descriptive name of what's being graded)
+  * "score": <number> (points awarded)
+  * "maxScore": <number> (maximum possible points)
+  * "feedback": <string> (detailed explanation, minimum 20 words)
+  
+  **CRITICAL RULES FOR criteriaGrades:**
+  1. EVERY question from the question structure MUST have AT LEAST ONE entry in criteriaGrades
+  2. If a question has no explicit subsections, create ONE criteriaGrade entry for that entire question
+  3. If a question has multiple parts/subsections, create SEPARATE criteriaGrade entries for each part
+  4. Question numbers in criteriaGrades MUST match the question structure exactly
+  5. The sum of all scores in criteriaGrades MUST equal overallGrade
+  6. Each criteriaGrade entry MUST have substantive feedback (minimum 20 words)
+  
+  Example for a simple question with no subsections:
+  {
+    "questionNumber": "1",
+    "criterionName": "Question 1: Complete Solution",
+    "score": 8,
+    "maxScore": 10,
+    "feedback": "The solution demonstrates good understanding of the core concepts. Code implementation is correct but could benefit from better documentation and error handling."
+  }
+  
+  Example for a question with subsections:
+  [
+    {
+      "questionNumber": "2a",
+      "criterionName": "Question 2a: Data Loading and Preprocessing",
+      "score": 3,
+      "maxScore": 3,
+      "feedback": "Correctly loaded the dataset using pandas. Proper handling of missing values and data types. Clean preprocessing pipeline implemented."
+    },
+    {
+      "questionNumber": "2b", 
+      "criterionName": "Question 2b: Statistical Analysis and Visualization",
+      "score": 5,
+      "maxScore": 7,
+      "feedback": "Analysis shows good effort with appropriate statistical tests. However, visualizations lack proper labels and the interpretation of results is incomplete. Need more detailed discussion of findings."
+    }
+  ]
+
+- "questionScores": Array of objects with detailed question-level breakdown. Each object must include:
+  * "questionNumber": <string> (e.g., "1", "2", "3" for main questions)
+  * "questionText": <string> (Brief summary of the question)
+  * "maxScore": <number> (Maximum possible points for this question/subsection)
+  * "earnedScore": <number> (Points earned by the student)
+  * "feedback": <string> (Specific feedback for this question/subsection)
+  * "subsections": Array of objects (if question has subsections like a, b, c or i, ii, iii, otherwise empty array). Each subsection object includes:
+    - "subsectionNumber": <string> (e.g., "a", "b", "i", "ii", "1", "2")
+    - "subsectionText": <string> (Brief summary)
+    - "maxScore": <number>
+    - "earnedScore": <number>
+    - "feedback": <string>
+- "strengths": Array of strings (minimum 3 strengths).
+- "areasForImprovement": Array of strings (minimum 2 areas).
+- "suggestions": Array of strings (minimum 2 concrete suggestions).
+
+**YOU MUST NEVER SKIP SUBSECTION DETAILS IN criteriaGrades. Every question needs granular grading entries with detailed feedback.**
+
+IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a, 1b, 1c), create ONE entry for Question 1 with subsections array containing 1a, 1b, 1c details. The question's earnedScore should be the sum of subsection scores.
 `;
 
     // --- Construct the Multi-Modal Request Content --- 
@@ -427,6 +557,24 @@ Provide your response ONLY as a valid JSON object matching the requested structu
       });
     } else {
       console.log('No solution data available or processing failed');
+    }
+    
+    console.log('\n--- ORCHESTRATED DATA STRUCTURE ---');
+    if (orchestratedData) {
+      console.log('✓ Orchestrated data is ACTIVE and will be used for evaluation');
+      console.log('Validation status:', orchestratedData.validation?.isValid ? 'VALID' : 'HAS ISSUES');
+      console.log('Completeness score:', orchestratedData.validation?.completenessScore || 0, '%');
+      console.log('Integrated questions:', orchestratedData.integratedStructure?.questions?.length || 0);
+      console.log('Issues found:', orchestratedData.validation?.issues?.length || 0);
+      console.log('Recommendations:', orchestratedData.recommendations?.length || 0);
+      if (orchestratedData.validation?.issues && orchestratedData.validation.issues.length > 0) {
+        console.log('Issues:');
+        orchestratedData.validation.issues.forEach((issue, idx) => {
+          console.log(`  ${idx + 1}. [${issue.severity}] ${issue.message}`);
+        });
+      }
+    } else {
+      console.log('⚠ No orchestrated data available - using raw assignment/rubric/solution data');
     }
     
     console.log('\n--- PROMPT BEING SENT TO GEMINI ---');
@@ -488,6 +636,66 @@ Provide your response ONLY as a valid JSON object matching the requested structu
       if (typeof parsedResult.overallGrade !== 'number' || !Array.isArray(parsedResult.criteriaGrades)) {
           throw new Error("Gemini response did not match the expected JSON structure.");
       }
+
+      // *** CRITICAL VALIDATION: Ensure criteriaGrades has entries for ALL questions ***
+      console.log('\n=== CRITERIA GRADES VALIDATION START ===');
+      const questionNumbers = questionStructure.map(q => String(q.number));
+      console.log(`Expected questions from structure: [${questionNumbers.join(', ')}]`);
+      console.log(`Received criteriaGrades count: ${parsedResult.criteriaGrades.length}`);
+      
+      // Check which questions are covered in criteriaGrades
+      const coveredQuestions = new Set();
+      parsedResult.criteriaGrades.forEach(cg => {
+        const qNum = String(cg.questionNumber || '').replace(/[^\d]/g, '').split('')[0]; // Extract base question number
+        if (qNum) coveredQuestions.add(qNum);
+      });
+      
+      console.log(`Questions covered in criteriaGrades: [${Array.from(coveredQuestions).join(', ')}]`);
+      
+      // Find missing questions
+      const missingQuestions = questionNumbers.filter(qn => !coveredQuestions.has(qn));
+      
+      if (missingQuestions.length > 0) {
+        console.warn(`⚠️  WARNING: Missing criteriaGrades for questions: [${missingQuestions.join(', ')}]`);
+        console.warn(`⚠️  This violates the prompt requirement that EVERY question must have criteriaGrades entries`);
+        console.warn(`⚠️  LLM may not be following instructions properly. Consider re-running this submission.`);
+        
+        // Log the actual criteriaGrades for debugging
+        console.log('Actual criteriaGrades received:');
+        parsedResult.criteriaGrades.forEach((cg, idx) => {
+          console.log(`  ${idx + 1}. Q${cg.questionNumber}: ${cg.criterionName} (${cg.score}/${cg.maxScore})`);
+        });
+      } else {
+        console.log(`✅ All questions have criteriaGrades entries`);
+      }
+      
+      // Validate that criteriaGrades has detailed breakdown (multiple entries per question if subsections exist)
+      const questionCounts = {};
+      parsedResult.criteriaGrades.forEach(cg => {
+        const baseQ = String(cg.questionNumber || '').charAt(0);
+        questionCounts[baseQ] = (questionCounts[baseQ] || 0) + 1;
+      });
+      
+      console.log('CriteriaGrades count per question:', questionCounts);
+      
+      // Check if we have subsection-level detail in questionScores
+      if (parsedResult.questionScores && Array.isArray(parsedResult.questionScores)) {
+        parsedResult.questionScores.forEach(qs => {
+          if (qs.subsections && qs.subsections.length > 0) {
+            const qNum = String(qs.questionNumber);
+            const subsectionCount = qs.subsections.length;
+            const criteriaCount = questionCounts[qNum] || 0;
+            
+            if (subsectionCount > 1 && criteriaCount === 1) {
+              console.warn(`⚠️  Question ${qNum} has ${subsectionCount} subsections but only ${criteriaCount} criteriaGrade entry`);
+              console.warn(`⚠️  Expected ${subsectionCount} separate criteriaGrade entries for detailed breakdown`);
+            }
+          }
+        });
+      }
+      
+      console.log('=== CRITERIA GRADES VALIDATION END ===\n');
+      // *** END VALIDATION ***
 
       // Clean up temporary PDF files if they were created from .ipynb
       if (originalFileType === '.ipynb' && submissionFilePath !== originalSubmissionPath) {
@@ -570,14 +778,23 @@ async function evaluateSubmissionWithText(assignmentData, rubricData, solutionDa
     const prompt = `
 You are an automated assignment grading assistant. Your task is to evaluate the student's Jupyter notebook submission against the assignment requirements, grading rubric, and model solution provided below.
 
+⚠️ **CRITICAL REQUIREMENT - READ THIS FIRST:**
+You MUST provide DETAILED SUBSECTION-LEVEL grading for EVERY SINGLE QUESTION in the criteriaGrades array.
+- If a question has subsections (e.g., 1a, 1b, 1c), you MUST create SEPARATE criteriaGrade entries for EACH subsection
+- If a question has NO subsections, you MUST still create at least ONE criteriaGrade entry for that question
+- NEVER summarize multiple subsections into one entry
+- NEVER skip any questions
+This is NOT optional - it is MANDATORY for every submission.
+
 ASSIGNMENT INFORMATION:
 Title: ${assignmentData.title || "No title provided"}
 Description: ${assignmentData.description || "No description provided"}
 ${questionStructureText}
 
 GRADING RUBRIC:
+${rubricCriteria.length > 0 ? '**A DETAILED GRADING RUBRIC HAS BEEN PROVIDED - THIS IS THE PRIMARY GRADING STANDARD**' : ''}
 Total Points: ${totalPossibleScore}
-${rubricCriteria.length > 0 ? `Grading Criteria: ${rubricCriteria.length} criteria found` : "No specific grading criteria found"}
+${rubricCriteria.length > 0 ? `Grading Criteria: ${rubricCriteria.length} criteria found - EACH MUST BE APPLIED` : "No specific grading criteria found - derive from assignment instructions"}
 ${questionRubricText}
 ${criteriaQuestionMappingText}
 
@@ -599,24 +816,85 @@ EVALUATION INSTRUCTIONS:
 4. The TOTAL maximum score for this assignment is ${totalPossibleScore} points.
 5. Grade EXACTLY according to the provided question structure and point values.
 6. Each question or subquestion must receive a score matching its defined point value in the question structure.
-7. Follow the rubric criteria for each question.
-8. When available, use the question-to-criteria mappings provided.
+7. ${rubricCriteria.length > 0 ? 
+    '**IMPORTANT: A grading rubric has been provided. You MUST follow the rubric criteria strictly for each question. Use the specific criteria descriptions, marking scales, and point distributions defined in the rubric.**' : 
+    'Since no explicit rubric is provided, derive grading criteria from the assignment instructions and question descriptions. Create appropriate evaluation criteria based on what each question is asking for.'
+  }
+8. ${rubricCriteria.length > 0 ? '**CRITICAL: Use the question-to-criteria mappings provided in the rubric. Each criterion is mapped to specific question(s) and must be applied accordingly with the specified weights.**' : 'Base your grading criteria on standard expectations for the type of questions asked (e.g., correctness, completeness, clarity, code quality, explanation depth).'}
 9. Do NOT convert scores to percentages. Use the raw scores exactly as specified.
-10. Provide detailed feedback for each question/subquestion, referencing the rubric and solution where applicable.
+10. Provide detailed feedback for each question/subquestion${rubricCriteria.length > 0 ? ', **explicitly referencing which rubric criteria were met or not met**' : ''}${solutionData && Object.keys(solutionData).length > 0 && !solutionData.processing_error ? ' and comparing with the model solution' : ''} where applicable.
 11. Consider code quality, correctness, documentation, and results when grading.
 12. Provide an overall grade (sum of question/subquestion scores), ensuring it does not exceed the total possible score.
 13. Provide a list of strengths observed in the submission.
 14. Provide a list of areas for improvement.
 15. Provide concrete suggestions for the student.
+${rubricCriteria.length > 0 ? '\n**REMINDER: When a rubric is provided, it is the PRIMARY grading standard. All scores and feedback must align with the rubric criteria.**' : ''}
 
 OUTPUT REQUIREMENTS:
 Provide your response ONLY as a valid JSON object matching the requested structure. The JSON object must include:
 - "overallGrade": <number> (Sum of scores, cannot exceed totalPossibleScore)
 - "totalPossible": <number> (The total possible score: ${totalPossibleScore})
-- "criteriaGrades": Array of objects, each with "questionNumber" (string), "criterionName" (string), "score" (number), "maxScore" (number), "feedback" (string).
-- "strengths": Array of strings.
-- "areasForImprovement": Array of strings.
-- "suggestions": Array of strings.
+- "criteriaGrades": Array of objects with MANDATORY subsection breakdown for EVERY question. Each object must have:
+  * "questionNumber": <string> (e.g., "1", "2", "1a", "1b")
+  * "criterionName": <string> (descriptive name of what's being graded)
+  * "score": <number> (points awarded)
+  * "maxScore": <number> (maximum possible points)
+  * "feedback": <string> (detailed explanation, minimum 20 words)
+  
+  **CRITICAL RULES FOR criteriaGrades:**
+  1. EVERY question from the question structure MUST have AT LEAST ONE entry in criteriaGrades
+  2. If a question has no explicit subsections, create ONE criteriaGrade entry for that entire question
+  3. If a question has multiple parts/subsections, create SEPARATE criteriaGrade entries for each part
+  4. Question numbers in criteriaGrades MUST match the question structure exactly
+  5. The sum of all scores in criteriaGrades MUST equal overallGrade
+  6. Each criteriaGrade entry MUST have substantive feedback (minimum 20 words)
+  
+  Example for a simple question with no subsections:
+  {
+    "questionNumber": "1",
+    "criterionName": "Question 1: Complete Solution",
+    "score": 8,
+    "maxScore": 10,
+    "feedback": "The solution demonstrates good understanding of the core concepts. Code implementation is correct but could benefit from better documentation and error handling."
+  }
+  
+  Example for a question with subsections:
+  [
+    {
+      "questionNumber": "2a",
+      "criterionName": "Question 2a: Data Loading and Preprocessing",
+      "score": 3,
+      "maxScore": 3,
+      "feedback": "Correctly loaded the dataset using pandas. Proper handling of missing values and data types. Clean preprocessing pipeline implemented."
+    },
+    {
+      "questionNumber": "2b", 
+      "criterionName": "Question 2b: Statistical Analysis and Visualization",
+      "score": 5,
+      "maxScore": 7,
+      "feedback": "Analysis shows good effort with appropriate statistical tests. However, visualizations lack proper labels and the interpretation of results is incomplete. Need more detailed discussion of findings."
+    }
+  ]
+
+- "questionScores": Array of objects with detailed question-level breakdown. Each object must include:
+  * "questionNumber": <string> (e.g., "1", "2", "3" for main questions)
+  * "questionText": <string> (Brief summary of the question)
+  * "maxScore": <number> (Maximum possible points for this question/subsection)
+  * "earnedScore": <number> (Points earned by the student)
+  * "feedback": <string> (Specific feedback for this question/subsection)
+  * "subsections": Array of objects (if question has subsections like a, b, c or i, ii, iii, otherwise empty array). Each subsection object includes:
+    - "subsectionNumber": <string> (e.g., "a", "b", "i", "ii", "1", "2")
+    - "subsectionText": <string> (Brief summary)
+    - "maxScore": <number>
+    - "earnedScore": <number>
+    - "feedback": <string>
+- "strengths": Array of strings (minimum 3 strengths).
+- "areasForImprovement": Array of strings (minimum 2 areas).
+- "suggestions": Array of strings (minimum 2 concrete suggestions).
+
+**YOU MUST NEVER SKIP SUBSECTION DETAILS IN criteriaGrades. Every question needs granular grading entries with detailed feedback.**
+
+IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a, 1b, 1c), create ONE entry for Question 1 with subsections array containing 1a, 1b, 1c details. The question's earnedScore should be the sum of subsection scores.
 `;
 
     console.log(`Sending text-based evaluation request to Gemini API for Jupyter notebook content`);
@@ -640,6 +918,66 @@ Provide your response ONLY as a valid JSON object matching the requested structu
     if (typeof parsedResult.overallGrade !== 'number' || !Array.isArray(parsedResult.criteriaGrades)) {
         throw new Error("Gemini response did not match the expected JSON structure.");
     }
+
+    // *** CRITICAL VALIDATION: Ensure criteriaGrades has entries for ALL questions ***
+    console.log('\n=== CRITERIA GRADES VALIDATION (Text-based) START ===');
+    const questionNumbers = questionStructure.map(q => String(q.number));
+    console.log(`Expected questions from structure: [${questionNumbers.join(', ')}]`);
+    console.log(`Received criteriaGrades count: ${parsedResult.criteriaGrades.length}`);
+    
+    // Check which questions are covered in criteriaGrades
+    const coveredQuestions = new Set();
+    parsedResult.criteriaGrades.forEach(cg => {
+      const qNum = String(cg.questionNumber || '').replace(/[^\d]/g, '').split('')[0]; // Extract base question number
+      if (qNum) coveredQuestions.add(qNum);
+    });
+    
+    console.log(`Questions covered in criteriaGrades: [${Array.from(coveredQuestions).join(', ')}]`);
+    
+    // Find missing questions
+    const missingQuestions = questionNumbers.filter(qn => !coveredQuestions.has(qn));
+    
+    if (missingQuestions.length > 0) {
+      console.warn(`⚠️  WARNING: Missing criteriaGrades for questions: [${missingQuestions.join(', ')}]`);
+      console.warn(`⚠️  This violates the prompt requirement that EVERY question must have criteriaGrades entries`);
+      console.warn(`⚠️  LLM may not be following instructions properly. Consider re-running this submission.`);
+      
+      // Log the actual criteriaGrades for debugging
+      console.log('Actual criteriaGrades received:');
+      parsedResult.criteriaGrades.forEach((cg, idx) => {
+        console.log(`  ${idx + 1}. Q${cg.questionNumber}: ${cg.criterionName} (${cg.score}/${cg.maxScore})`);
+      });
+    } else {
+      console.log(`✅ All questions have criteriaGrades entries`);
+    }
+    
+    // Validate that criteriaGrades has detailed breakdown (multiple entries per question if subsections exist)
+    const questionCounts = {};
+    parsedResult.criteriaGrades.forEach(cg => {
+      const baseQ = String(cg.questionNumber || '').charAt(0);
+      questionCounts[baseQ] = (questionCounts[baseQ] || 0) + 1;
+    });
+    
+    console.log('CriteriaGrades count per question:', questionCounts);
+    
+    // Check if we have subsection-level detail in questionScores
+    if (parsedResult.questionScores && Array.isArray(parsedResult.questionScores)) {
+      parsedResult.questionScores.forEach(qs => {
+        if (qs.subsections && qs.subsections.length > 0) {
+          const qNum = String(qs.questionNumber);
+          const subsectionCount = qs.subsections.length;
+          const criteriaCount = questionCounts[qNum] || 0;
+          
+          if (subsectionCount > 1 && criteriaCount === 1) {
+            console.warn(`⚠️  Question ${qNum} has ${subsectionCount} subsections but only ${criteriaCount} criteriaGrade entry`);
+            console.warn(`⚠️  Expected ${subsectionCount} separate criteriaGrade entries for detailed breakdown`);
+          }
+        }
+      });
+    }
+    
+    console.log('=== CRITERIA GRADES VALIDATION (Text-based) END ===\n');
+    // *** END VALIDATION ***
 
     return parsedResult;
 
@@ -1084,7 +1422,7 @@ Analyze the PDF document thoroughly and return ONLY a JSON object.`;
 
     // Configure the model for PDF processing
     const modelConfig = genAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
         temperature: 0.1,
         maxOutputTokens: 65536,
@@ -1225,7 +1563,7 @@ Return ONLY the JSON object. Ensure the JSON is complete and properly closed wit
 
     // Configure the model for PDF processing
     const modelConfig = genAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
         temperature: 0.1,
         maxOutputTokens: 65536, // Maximum output tokens for Gemini 2.5 Pro
@@ -1424,7 +1762,7 @@ Analyze the PDF document and return ONLY a JSON object with this structure.`;
 
     // Configure the model for PDF processing
     const modelConfig = genAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
         temperature: 0.1,
         maxOutputTokens: 65536,
@@ -1667,21 +2005,35 @@ async function processSolutionPDF(pdfFilePath) {
     const base64Data = fileBuffer.toString('base64');
       
     const prompt = `
-Analyze this model solution and extract for each question:
-1. Question Number: The question number (e.g., "1", "2", "1.1")
-2. Question Summary: Brief description of the question
-3. Solution: The provided solution or implementation
-4. Expected Output: Results when executed
-5. Key Steps: Main implementation steps
-6. Dependencies: Required libraries (if any)
+Analyze this model solution PDF and extract information for each question.
 
-Return as JSON with an array of questions, where each question has these fields.
+For each question identified, extract:
+1. questionNumber: The question number (e.g., "1", "2", "1.1")
+2. questionSummary: Brief description of what the question asks
+3. solution: The complete model solution or implementation provided
+4. expectedOutput: Expected results when the solution is executed (if shown)
+5. keySteps: Array of main implementation steps or approach
+6. dependencies: Array of required libraries/imports (if any)
 
-Analyze the PDF document and return ONLY a JSON object with this structure.`;
+Return ONLY a valid JSON object with this EXACT structure:
+{
+  "questions": [
+    {
+      "questionNumber": "string",
+      "questionSummary": "string", 
+      "solution": "string",
+      "expectedOutput": "string",
+      "keySteps": ["string"],
+      "dependencies": ["string"]
+    }
+  ]
+}
+
+Do NOT include any markdown formatting, code blocks, or explanatory text. Return ONLY the raw JSON object.`;
 
     // Configure the model for PDF processing
     const modelConfig = genAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
         temperature: 0.1,
         maxOutputTokens: 65536,
@@ -1753,6 +2105,20 @@ Analyze the PDF document and return ONLY a JSON object with this structure.`;
       console.error("Failed to parse JSON response for solution:", responseText.substring(0, 500));
       throw new Error(`Invalid JSON response from Gemini API: ${jsonError.message}`);
     }
+    
+    // Validate the response structure
+    if (!parsed.questions) {
+      console.warn("Gemini response missing 'questions' array. Response:", JSON.stringify(parsed));
+      // If the response is directly an array, wrap it
+      if (Array.isArray(parsed)) {
+        parsed = { questions: parsed };
+      } else {
+        // Otherwise return empty questions array
+        parsed = { questions: [] };
+      }
+    }
+    
+    console.log(`Successfully parsed solution with ${parsed.questions.length} question(s)`);
     
     return parsed;
   } catch (error) {
@@ -1853,6 +2219,229 @@ ${truncatedText}
   }
 }
 
+/**
+ * Orchestrate and validate assignment, rubric, and solution data
+ * Creates integrated mappings and validates consistency across documents
+ * Can re-read files if needed for better validation
+ * @param {Object} assignmentData - Processed assignment data
+ * @param {Object} rubricData - Processed rubric data (can be null)
+ * @param {Object} solutionData - Processed solution data (can be null)
+ * @param {Object} filePaths - Optional file paths for re-reading: { assignmentPath, rubricPath, solutionPath }
+ * @returns {Promise<Object>} - Orchestrated and validated data with mappings
+ */
+async function orchestrateAssignmentData(assignmentData, rubricData, solutionData, filePaths = null) {
+  try {
+    console.log('Starting orchestration of assignment, rubric, and solution data...');
+    
+    // If file paths are provided and data seems incomplete, re-read the files
+    let enhancedAssignmentData = assignmentData;
+    let enhancedRubricData = rubricData;
+    let enhancedSolutionData = solutionData;
+    
+    if (filePaths) {
+      console.log('File paths provided for potential re-reading:');
+      if (filePaths.assignmentPath) console.log('  - Assignment:', filePaths.assignmentPath);
+      if (filePaths.rubricPath) console.log('  - Rubric:', filePaths.rubricPath);
+      if (filePaths.solutionPath) console.log('  - Solution:', filePaths.solutionPath);
+      
+      // Re-read assignment if it seems incomplete or if requested
+      if (filePaths.assignmentPath && (!assignmentData || !assignmentData.questions || assignmentData.questions.length === 0)) {
+        console.log('Re-reading assignment file for better data...');
+        try {
+          enhancedAssignmentData = await processAssignmentPDF(filePaths.assignmentPath);
+          console.log('Assignment re-read successful');
+        } catch (error) {
+          console.warn('Failed to re-read assignment:', error.message);
+        }
+      }
+      
+      // Re-read rubric if it seems incomplete or if requested
+      if (filePaths.rubricPath && (!rubricData || !rubricData.grading_criteria || rubricData.grading_criteria.length === 0)) {
+        console.log('Re-reading rubric file for better data...');
+        try {
+          enhancedRubricData = await processRubricPDF(filePaths.rubricPath);
+          console.log('Rubric re-read successful');
+        } catch (error) {
+          console.warn('Failed to re-read rubric:', error.message);
+        }
+      }
+      
+      // Re-read solution if it seems incomplete or if requested
+      if (filePaths.solutionPath && (!solutionData || !solutionData.questions || solutionData.questions.length === 0)) {
+        console.log('Re-reading solution file for better data...');
+        try {
+          enhancedSolutionData = await processSolutionPDF(filePaths.solutionPath);
+          console.log('Solution re-read successful');
+        } catch (error) {
+          console.warn('Failed to re-read solution:', error.message);
+        }
+      }
+    }
+    
+    // Build a comprehensive prompt for orchestration
+    const prompt = `
+You are an educational content orchestrator. Your task is to validate and integrate assignment, rubric, and solution documents to ensure consistency and completeness for automated grading.
+
+You will receive three processed documents (some may be missing):
+1. Assignment data (ALWAYS present)
+2. Rubric data (OPTIONAL)
+3. Solution data (OPTIONAL)
+
+ASSIGNMENT DATA:
+${JSON.stringify(enhancedAssignmentData, null, 2)}
+
+RUBRIC DATA:
+${enhancedRubricData ? JSON.stringify(enhancedRubricData, null, 2) : 'NOT PROVIDED - Grading criteria will be derived from assignment'}
+
+SOLUTION DATA:
+${enhancedSolutionData ? JSON.stringify(enhancedSolutionData, null, 2) : 'NOT PROVIDED - Solution is optional'}
+
+YOUR TASKS:
+
+1. **VALIDATION**: Check for consistency and completeness:
+   ${enhancedRubricData ? `
+   - Verify that EACH assignment question has corresponding rubric criteria
+   - Check that rubric criteria total points match assignment total points
+   - Identify any rubric criteria that don't map to specific questions
+   - Ensure rubric question numbers match assignment question numbers` : ''}
+   ${enhancedSolutionData ? `
+   - Verify that solution covers all assignment questions
+   - Check that solution question numbers match assignment question numbers` : ''}
+   - Identify any inconsistencies in question numbering across documents
+
+2. **MAPPING**: Create integrated mappings:
+   ${enhancedRubricData ? `
+   - Map each assignment question to its rubric criteria
+   - Calculate expected points per question from rubric weights` : ''}
+   ${enhancedSolutionData ? `
+   - Map each assignment question to its solution
+   - Link solution steps to assignment requirements` : ''}
+
+3. **ISSUE DETECTION**: Identify problems:
+   - Missing rubric criteria for assignment questions
+   - Extra rubric criteria not tied to questions
+   - Missing solutions for assignment questions
+   - Point allocation mismatches
+   - Question numbering inconsistencies
+
+4. **RECOMMENDATIONS**: Provide actionable suggestions to improve grading accuracy
+
+OUTPUT REQUIREMENTS:
+Return a JSON object with this exact structure:
+
+{
+  "validation": {
+    "isValid": <boolean>,
+    "hasWarnings": <boolean>,
+    "completenessScore": <number 0-100>,
+    "issues": [
+      {
+        "severity": "error|warning|info",
+        "category": "rubric|solution|numbering|points",
+        "message": "Description of the issue",
+        "affectedQuestions": ["question numbers"]
+      }
+    ]
+  },
+  "questionMapping": [
+    {
+      "questionNumber": "1",
+      "questionText": "Brief summary",
+      "assignmentPoints": <number>,
+      "rubricCriteria": [
+        {
+          "criterionName": "Name",
+          "weight": <number>,
+          "description": "Description",
+          "hasMapping": <boolean>
+        }
+      ],
+      "hasSolution": <boolean>,
+      "solutionSummary": "Brief summary if available",
+      "totalMappedPoints": <number>,
+      "pointsConsistent": <boolean>
+    }
+  ],
+  "statistics": {
+    "totalQuestions": <number>,
+    "questionsWithRubric": <number>,
+    "questionsWithSolution": <number>,
+    "totalAssignmentPoints": <number>,
+    "totalRubricPoints": <number>,
+    "pointsMatch": <boolean>
+  },
+  "recommendations": [
+    {
+      "priority": "high|medium|low",
+      "category": "rubric|solution|structure",
+      "recommendation": "Specific actionable suggestion"
+    }
+  ],
+  "integratedStructure": {
+    "questions": [
+      {
+        "number": "1",
+        "text": "Question text",
+        "points": <number>,
+        "requirements": ["requirement1", "requirement2"],
+        "rubricCriteria": [
+          {
+            "name": "Criterion name",
+            "weight": <number>,
+            "description": "Description",
+            "markingScale": "Scale if available"
+          }
+        ],
+        "solution": {
+          "available": <boolean>,
+          "summary": "Summary if available",
+          "keyPoints": ["point1", "point2"]
+        }
+      }
+    ],
+    "metadata": {
+      "totalPoints": <number>,
+      "numberOfQuestions": <number>,
+      "hasCompleteRubric": <boolean>,
+      "hasCompleteSolution": <boolean>
+    }
+  }
+}
+
+IMPORTANT: Your response must be ONLY valid JSON. Ensure all fields are present and properly formatted.
+`;
+
+    console.log('\n=== ORCHESTRATION PROMPT DEBUG START ===');
+    console.log('Sending orchestration request to Gemini...');
+    console.log('Assignment questions:', enhancedAssignmentData?.questions?.length || 0);
+    console.log('Rubric criteria:', enhancedRubricData?.grading_criteria?.length || 0);
+    console.log('Solution questions:', enhancedSolutionData?.questions?.length || 0);
+    console.log('=== ORCHESTRATION PROMPT DEBUG END ===\n');
+
+    // Call Gemini API with the orchestration prompt
+    const responseText = await getGeminiResponse(prompt, true);
+    
+    // Parse the response
+    let orchestratedResult;
+    try {
+      orchestratedResult = JSON.parse(responseText);
+      console.log('Orchestration completed successfully');
+      console.log('Validation status:', orchestratedResult.validation?.isValid ? 'VALID' : 'HAS ISSUES');
+      console.log('Completeness score:', orchestratedResult.validation?.completenessScore);
+      console.log('Total issues found:', orchestratedResult.validation?.issues?.length || 0);
+    } catch (parseError) {
+      console.error('Failed to parse orchestration response:', parseError);
+      throw new Error('Invalid JSON response from orchestration');
+    }
+    
+    return orchestratedResult;
+    
+  } catch (error) {
+    console.error('Error during orchestration:', error);
+    throw new Error(`Orchestration failed: ${error.message}`);
+  }
+}
+
 module.exports = {
   evaluateSubmission,
   evaluateSubmissionWithText,
@@ -1868,5 +2457,7 @@ module.exports = {
   processAssignmentPDF,
   processRubricPDF,
   processSolutionPDF,
-  extractRubricFromAssignmentPDF
+  extractRubricFromAssignmentPDF,
+  // Orchestration function
+  orchestrateAssignmentData
 };

@@ -63,17 +63,20 @@ submissionProcessingQueue.process(async (job) => {
       console.log(`Evaluation job created for submission ${submissionId}`);
     } 
     else if (assignment.evaluationReadyStatus === 'partial' &&
-             assignment.processedData && 
-             assignment.processedRubric) {
-      // We have the essential components (assignment and rubric) - proceed with evaluation
-      console.log(`Assignment ${submission.assignmentId} has partial readiness but has required components. Proceeding with evaluation.`);
+             assignment.processedData) {
+      // We have at least the assignment data - proceed with evaluation
+      // Rubric and solution are optional
+      console.log(`Assignment ${submission.assignmentId} has partial readiness. Proceeding with evaluation.`);
+      console.log(`  - Assignment data: ${assignment.processedData ? 'Available' : 'Missing'}`);
+      console.log(`  - Rubric data: ${assignment.processedRubric ? 'Available (will be used)' : 'Not available (will derive from assignment)'}`);
+      console.log(`  - Solution data: ${assignment.processedSolution ? 'Available (will be used)' : 'Not available (optional)'}`);
       
       const jobPayload = {
         submissionId,
         assignmentId: submission.assignmentId,
         assignmentData: assignment.processedData,
-        rubricData: assignment.processedRubric,
-        solutionData: assignment.processedSolution || {}, // Use empty object if solution is missing
+        rubricData: assignment.processedRubric || null, // Can be null - will derive from assignment if needed
+        solutionData: assignment.processedSolution || null, // Can be null - solution is optional
         submissionFilePath: filePath,
         submissionOriginalPath: originalPath,
         submissionFileType: fileType,
@@ -82,10 +85,11 @@ submissionProcessingQueue.process(async (job) => {
       // *** ADDED LOGGING ***
       console.log(`[SubmissionProcessor] Creating 'partial' evaluation job. assignment.processedSolution:`, assignment.processedSolution);
       console.log(`[SubmissionProcessor] Creating 'partial' evaluation job. Payload solutionData:`, jobPayload.solutionData);
+      console.log(`[SubmissionProcessor] Creating 'partial' evaluation job. Payload rubricData:`, jobPayload.rubricData ? 'Present' : 'Null (will derive from assignment)');
       // *** END ADDED LOGGING ***
       await evaluationQueue.createJob(jobPayload).save();
       
-      console.log(`Evaluation job created for submission ${submissionId} with partial data`);
+      console.log(`Evaluation job created for submission ${submissionId} with available data`);
     } 
     else {
       // Assignment is not ready yet

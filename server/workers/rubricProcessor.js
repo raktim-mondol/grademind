@@ -5,7 +5,7 @@
 const { rubricProcessingQueue } = require('../config/queue');
 const { processRubricPDF } = require('../utils/geminiService');
 const { Assignment } = require('../models/assignment');
-const { updateAssignmentEvaluationReadiness } = require('../utils/assignmentUtils');
+const { updateAssignmentEvaluationReadiness, checkAndTriggerOrchestration } = require('../utils/assignmentUtils');
 const mongoose = require('mongoose');
 
 // Process rubrics from the queue
@@ -46,6 +46,9 @@ rubricProcessingQueue.process(async (job) => {
     // Check if the assignment is now ready for evaluation
     const readyStatus = await updateAssignmentEvaluationReadiness(assignmentId);
     console.log(`Rubric for assignment ${assignmentId} processed successfully. Evaluation ready status: ${readyStatus}`);
+    
+    // Check if we should trigger orchestration
+    await checkAndTriggerOrchestration(assignmentId);
     
     return { success: true, assignmentId, processedRubric, readyStatus };
   } catch (error) {

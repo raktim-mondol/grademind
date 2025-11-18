@@ -6,7 +6,7 @@
 const { assignmentProcessingQueue, rubricProcessingQueue } = require('../config/queue');
 const { processAssignmentPDF, extractRubricFromAssignmentPDF } = require('../utils/geminiService');
 const { Assignment } = require('../models/assignment');
-const { updateAssignmentEvaluationReadiness } = require('../utils/assignmentUtils');
+const { updateAssignmentEvaluationReadiness, checkAndTriggerOrchestration } = require('../utils/assignmentUtils');
 const mongoose = require('mongoose');
 
 // Process assignments from the queue
@@ -39,9 +39,10 @@ assignmentProcessingQueue.process(async (job) => {
     // Check if the assignment has a separate rubric file
     const assignment = await Assignment.findById(assignmentId);
     
-    // If no separate rubric file is provided, extract rubric from assignment PDF
+    // If no separate rubric file is provided, try to extract rubric from assignment PDF
+    // Note: This is optional - if extraction fails, evaluation can still proceed
     if (!assignment.rubricFile) {
-      console.log(`No separate rubric file found for assignment ${assignmentId}. Extracting rubric from assignment PDF...`);
+      console.log(`No separate rubric file found for assignment ${assignmentId}. Attempting to extract rubric from assignment PDF...`);
       
       try {
         // Update rubric processing status to indicate we're extracting from assignment
@@ -67,12 +68,15 @@ assignmentProcessingQueue.process(async (job) => {
         
       } catch (rubricError) {
         console.error(`Error extracting rubric from assignment PDF for assignment ${assignmentId}:`, rubricError);
+        console.log(`Rubric extraction failed, but evaluation can still proceed using assignment instructions for grading criteria.`);
         
         // Update rubric status to failed but don't fail the entire assignment
+        // Evaluation can still proceed without explicit rubric
         await Assignment.findByIdAndUpdate(assignmentId, {
-          rubricProcessingStatus: 'failed',
+          rubricProcessingStatus: 'skipped',
           rubricProcessingError: `Failed to extract rubric from assignment PDF: ${rubricError.message}`,
-          rubricExtractionSource: 'assignment_pdf_failed'
+          rubricExtractionSource: 'assignment_pdf_failed',
+          rubricExtractionNotes: 'Rubric extraction failed - grading criteria will be derived from assignment instructions during evaluation'
         });
       }
     }
@@ -80,6 +84,9 @@ assignmentProcessingQueue.process(async (job) => {
     // Check if the assignment is now ready for evaluation
     const readyStatus = await updateAssignmentEvaluationReadiness(assignmentId);
     console.log(`Assignment ${assignmentId} processed successfully. Evaluation ready status: ${readyStatus}`);
+    
+    // Check if we should trigger orchestration
+    await checkAndTriggerOrchestration(assignmentId);
     
     return { success: true, assignmentId, processedData, readyStatus };
   } catch (error) {

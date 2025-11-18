@@ -5,7 +5,7 @@
 const { solutionProcessingQueue } = require('../config/queue');
 const { processSolutionPDF } = require('../utils/geminiService');
 const { Assignment } = require('../models/assignment');
-const { updateAssignmentEvaluationReadiness } = require('../utils/assignmentUtils');
+const { updateAssignmentEvaluationReadiness, checkAndTriggerOrchestration } = require('../utils/assignmentUtils');
 const mongoose = require('mongoose');
 
 // Process solutions from the queue
@@ -38,6 +38,9 @@ solutionProcessingQueue.process(async (job) => {
     // Check if the assignment is now ready for evaluation
     const readyStatus = await updateAssignmentEvaluationReadiness(assignmentId);
     console.log(`Solution for assignment ${assignmentId} processed successfully. Evaluation ready status: ${readyStatus}`);
+    
+    // Check if we should trigger orchestration
+    await checkAndTriggerOrchestration(assignmentId);
     
     return { success: true, assignmentId, processedSolution, readyStatus };
   } catch (error) {

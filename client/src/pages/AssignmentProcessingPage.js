@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Row, Col, Card, Alert, Spinner, Button, ProgressBar, Badge } from 'react-bootstrap';
+import { Container, Row, Col, Card, Alert, Spinner, Button, ProgressBar, Badge, Form } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { FiCheckCircle, FiAlertCircle, FiClock, FiInfo, FiArrowLeft, FiUpload, FiFileText } from 'react-icons/fi';
+import { FiCheckCircle, FiAlertCircle, FiClock, FiInfo, FiArrowLeft, FiUpload, FiFileText, FiRefreshCw } from 'react-icons/fi';
 
 const AssignmentProcessingPage = () => {
   const { id } = useParams();
@@ -13,6 +13,7 @@ const AssignmentProcessingPage = () => {
     assignmentProcessingStatus: 'pending',
     rubricProcessingStatus: 'not_applicable',
     solutionProcessingStatus: 'not_applicable',
+    orchestrationStatus: 'not_needed',  // Changed default
     evaluationReadyStatus: 'not_ready'
   });
   const [loading, setLoading] = useState(true);
@@ -20,6 +21,8 @@ const AssignmentProcessingPage = () => {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [processingTimes, setProcessingTimes] = useState({});
   const [showHelp, setShowHelp] = useState(false);
+  const [rerunningOrchestration, setRerunningOrchestration] = useState(false);
+  const [forceReread, setForceReread] = useState(false);
   
   // Stable processing times that won't flicker
   const [stableProcessingTimes, setStableProcessingTimes] = useState({
@@ -76,6 +79,18 @@ const AssignmentProcessingPage = () => {
       try {
         const { data } = await axios.get(`/api/assignments/${id}/status`);
         setLastUpdated(new Date());
+        
+        // Debug logging for all statuses
+        console.log('=== Processing Status Update ===');
+        console.log('Assignment:', data.assignmentProcessingStatus);
+        console.log('Rubric:', data.rubricProcessingStatus);
+        console.log('Solution:', data.solutionProcessingStatus);
+        console.log('Orchestration:', data.orchestrationStatus);
+        console.log('Evaluation Ready:', data.evaluationReadyStatus);
+        if (data.orchestrationData) {
+          console.log('Orchestration Data:', data.orchestrationData);
+        }
+        console.log('===============================');
         
         // Calculate processing times for completed items that just changed status
         const newTimes = { ...processingTimes };
@@ -166,12 +181,27 @@ const AssignmentProcessingPage = () => {
         setProcessingStatus(data);
         
         // If all processing is complete or failed, we can stop polling
-        if (
-          (data.evaluationReadyStatus === 'ready' || data.evaluationReadyStatus === 'partial') &&
+        // IMPORTANT: Also wait for orchestration if it was started
+        const documentsReady = (
           (data.assignmentProcessingStatus === 'completed' || data.assignmentProcessingStatus === 'failed') && 
           (data.rubricProcessingStatus === 'completed' || data.rubricProcessingStatus === 'not_applicable' || data.rubricProcessingStatus === 'failed') &&
           (data.solutionProcessingStatus === 'completed' || data.solutionProcessingStatus === 'not_applicable' || data.solutionProcessingStatus === 'failed')
+        );
+        
+        const orchestrationReady = (
+          !data.orchestrationStatus || 
+          data.orchestrationStatus === 'not_needed' ||  // Orchestration disabled
+          data.orchestrationStatus === 'pending' ||     // Not started yet
+          data.orchestrationStatus === 'completed' ||   // Finished
+          data.orchestrationStatus === 'failed'         // Failed
+        );
+        
+        if (
+          (data.evaluationReadyStatus === 'ready' || data.evaluationReadyStatus === 'partial') &&
+          documentsReady &&
+          orchestrationReady
         ) {
+          console.log('All processing complete, stopping polling');
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
             pollingIntervalRef.current = null;
@@ -285,17 +315,62 @@ const AssignmentProcessingPage = () => {
     return null;
   };
 
+  // Handle re-running orchestration
+  const handleRerunOrchestration = async () => {
+    if (!id) return;
+    
+    try {
+      setRerunningOrchestration(true);
+      setError(null);
+      
+      console.log(`Re-running orchestration for assignment ${id}, forceReread: ${forceReread}`);
+      
+      const response = await axios.post(`/api/assignments/${id}/rerun-orchestration`, {
+        forceReread: forceReread
+      });
+      
+      console.log('Orchestration re-run response:', response.data);
+      
+      // Reset polling to start checking status again
+      if (!pollingIntervalRef.current) {
+        const intervalId = setInterval(async () => {
+          try {
+            const { data } = await axios.get(`/api/assignments/${id}/status`);
+            setProcessingStatus(data);
+            setLastUpdated(new Date());
+          } catch (err) {
+            console.error('Error polling status:', err);
+          }
+        }, 2000);
+        pollingIntervalRef.current = intervalId;
+      }
+      
+      setRerunningOrchestration(false);
+      
+    } catch (err) {
+      console.error('Error re-running orchestration:', err);
+      setError(err.response?.data?.error || 'Failed to re-run orchestration. Please try again.');
+      setRerunningOrchestration(false);
+    }
+  };
+
   // Calculate overall progress percentage
   const calculateProgress = () => {
-    // Count only applicable items
+    // Count only applicable items (including orchestration only if it has started)
+    const orchestrationStarted = processingStatus.orchestrationStatus && 
+                                 processingStatus.orchestrationStatus !== 'not_needed' &&
+                                 processingStatus.orchestrationStatus !== 'pending';
+    
     const total = 1 + // Assignment is always required
       (processingStatus.rubricProcessingStatus !== 'not_applicable' ? 1 : 0) +
-      (processingStatus.solutionProcessingStatus !== 'not_applicable' ? 1 : 0);
+      (processingStatus.solutionProcessingStatus !== 'not_applicable' ? 1 : 0) +
+      (orchestrationStarted ? 1 : 0);
     
     let completed = 0;
     if (processingStatus.assignmentProcessingStatus === 'completed') completed += 1;
     if (processingStatus.rubricProcessingStatus === 'completed') completed += 1;
     if (processingStatus.solutionProcessingStatus === 'completed') completed += 1;
+    if (processingStatus.orchestrationStatus === 'completed') completed += 1;
     
     return Math.round((completed / total) * 100);
   };
@@ -378,7 +453,11 @@ const AssignmentProcessingPage = () => {
           <ul className="mb-3">
             <li className="mb-2">The <strong>Assignment</strong> document is always required and must be processed.</li>
             <li className="mb-2">The <strong>Rubric</strong> document is highly recommended for accurate grading.</li>
-            <li>The <strong>Solution</strong> document is optional but provides better feedback to students.</li>
+            <li className="mb-2">The <strong>Solution</strong> document is optional but provides better feedback to students.</li>
+            <li className="mb-2">
+              <strong>Orchestration & Validation</strong> is <span className="text-primary">optional and disabled by default</span>. 
+              You can manually enable it to validate consistency and create integrated mappings for optimal grading accuracy.
+            </li>
           </ul>
           <p className="mb-0 fst-italic">
             You'll be notified when all documents are processed and the assignment is ready for student submissions.
@@ -514,6 +593,225 @@ const AssignmentProcessingPage = () => {
               </Card>
             </Col>
           </Row>
+
+          {/* Orchestration Disabled / Enable Section */}
+          {processingStatus.orchestrationStatus === 'not_needed' && 
+           processingStatus.assignmentProcessingStatus === 'completed' &&
+           (processingStatus.rubricProcessingStatus === 'completed' || processingStatus.rubricProcessingStatus === 'not_applicable') &&
+           (processingStatus.solutionProcessingStatus === 'completed' || processingStatus.solutionProcessingStatus === 'not_applicable') && (
+            <Row className="mt-4">
+              <Col>
+                <Card className="border-0 shadow-sm" style={{ background: '#f8f9fa' }}>
+                  <Card.Body className="p-4">
+                    <div className="d-flex align-items-start">
+                      <div className="flex-grow-1">
+                        <div className="d-flex align-items-center mb-2">
+                          <FiInfo size={24} className="text-info me-3" />
+                          <h5 className="mb-0 fw-bold">Orchestration & Validation (Optional)</h5>
+                        </div>
+                        <p className="text-muted mb-3 ms-5">
+                          Orchestration validates and integrates your assignment, rubric, and solution documents 
+                          to ensure consistency and optimal grading accuracy. It's <strong>optional</strong> but recommended 
+                          for better quality assurance.
+                        </p>
+                        <div className="ms-5">
+                          <Alert variant="info" className="mb-3 small">
+                            <strong>What it does:</strong>
+                            <ul className="mb-0 mt-2">
+                              <li>Validates question-to-rubric mappings</li>
+                              <li>Checks for consistency across documents</li>
+                              <li>Creates integrated grading structure</li>
+                              <li>Provides completeness score and recommendations</li>
+                            </ul>
+                          </Alert>
+                          <div className="d-flex gap-2 align-items-center">
+                            <Form.Check 
+                              type="checkbox"
+                              id="enable-force-reread-checkbox"
+                              label={<small>Force re-read files for best accuracy</small>}
+                              checked={forceReread}
+                              onChange={(e) => setForceReread(e.target.checked)}
+                              disabled={rerunningOrchestration}
+                              title="Re-read all PDF files from disk for comprehensive validation"
+                            />
+                            <Button 
+                              variant="primary"
+                              size="sm"
+                              onClick={handleRerunOrchestration}
+                              disabled={rerunningOrchestration}
+                              className="d-flex align-items-center"
+                            >
+                              {rerunningOrchestration ? (
+                                <>
+                                  <Spinner animation="border" size="sm" className="me-2" />
+                                  Running...
+                                </>
+                              ) : (
+                                <>
+                                  <FiCheckCircle className="me-2" />
+                                  Run Orchestration Now
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Card.Body>
+                </Card>
+              </Col>
+            </Row>
+          )}
+
+          {/* Orchestration Status Section */}
+          {processingStatus.orchestrationStatus && 
+           processingStatus.orchestrationStatus !== 'pending' && 
+           processingStatus.orchestrationStatus !== 'not_needed' && (
+            <Row className="mt-4">
+              <Col>
+                <Card className={`border-0 shadow-sm status-card ${processingStatus.orchestrationStatus === 'completed' ? 'status-completed' : processingStatus.orchestrationStatus === 'processing' ? 'status-processing' : processingStatus.orchestrationStatus === 'failed' ? 'status-failed' : ''}`}>
+                  <Card.Header className="bg-transparent border-bottom-0 pt-4 pb-3 px-4">
+                    <div className="d-flex align-items-center">
+                      <div className="status-icon me-3">
+                        {getStatusIcon(processingStatus.orchestrationStatus)}
+                      </div>
+                      <div className="flex-grow-1">
+                        <h5 className="mb-0 fw-bold">Orchestration & Validation</h5>
+                        <small className="text-muted">Integrating assignment, rubric, and solution for optimal grading</small>
+                      </div>
+                      <Badge bg="warning" className="ms-2">Enhanced Quality</Badge>
+                    </div>
+                  </Card.Header>
+                  
+                  <Card.Body className="px-4 pb-4">
+                    <Row>
+                      <Col md={4}>
+                        <div className={`status-label text-${getStatusColor(processingStatus.orchestrationStatus)}`}>
+                          {processingStatus.orchestrationStatus === 'completed' 
+                            ? 'Validation Completed' 
+                            : processingStatus.orchestrationStatus === 'processing'
+                            ? 'Validating Documents'
+                            : processingStatus.orchestrationStatus === 'failed'
+                            ? 'Validation Failed'
+                            : 'Pending Validation'}
+                        </div>
+                        {processingStatus.orchestrationError && (
+                          <Alert variant="danger" className="mt-3 small py-2">
+                            {processingStatus.orchestrationError}
+                          </Alert>
+                        )}
+                      </Col>
+                      
+                      {processingStatus.orchestrationData && processingStatus.orchestrationStatus === 'completed' && (
+                        <>
+                          <Col md={8}>
+                            <div className="d-flex flex-wrap gap-3">
+                              <div className="flex-grow-1">
+                                <div className="d-flex align-items-center mb-2">
+                                  <strong className="me-2">Completeness Score:</strong>
+                                  <Badge 
+                                    bg={processingStatus.orchestrationData.completenessScore >= 80 ? 'success' : processingStatus.orchestrationData.completenessScore >= 60 ? 'warning' : 'danger'}
+                                    className="fs-6"
+                                  >
+                                    {processingStatus.orchestrationData.completenessScore}%
+                                  </Badge>
+                                </div>
+                                <ProgressBar 
+                                  now={processingStatus.orchestrationData.completenessScore} 
+                                  variant={processingStatus.orchestrationData.completenessScore >= 80 ? 'success' : processingStatus.orchestrationData.completenessScore >= 60 ? 'warning' : 'danger'}
+                                  className="mb-3"
+                                  style={{ height: '8px' }}
+                                />
+                              </div>
+                              
+                              <div className="d-flex gap-3">
+                                <div className="text-center">
+                                  <div className={`fw-bold fs-5 ${processingStatus.orchestrationData.isValid ? 'text-success' : 'text-warning'}`}>
+                                    {processingStatus.orchestrationData.isValid ? '✓' : '⚠'}
+                                  </div>
+                                  <small className="text-muted">Valid</small>
+                                </div>
+                                
+                                <div className="text-center">
+                                  <div className="fw-bold fs-5 text-info">
+                                    {processingStatus.orchestrationData.issuesCount}
+                                  </div>
+                                  <small className="text-muted">Issues</small>
+                                </div>
+                                
+                                <div className="text-center">
+                                  <div className="fw-bold fs-5 text-primary">
+                                    {processingStatus.orchestrationData.recommendationsCount}
+                                  </div>
+                                  <small className="text-muted">Tips</small>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {processingStatus.orchestrationData.hasWarnings && (
+                              <Alert variant="warning" className="mt-3 mb-0 small py-2">
+                                <FiInfo className="me-2" />
+                                Some issues were detected during validation. The system will still grade submissions, but you may want to review the assignment structure.
+                              </Alert>
+                            )}
+                          </Col>
+                        </>
+                      )}
+                    </Row>
+                    
+                    {/* Re-run Orchestration Button */}
+                    {processingStatus.orchestrationStatus === 'completed' && (
+                      <Row className="mt-4 pt-3 border-top">
+                        <Col>
+                          <div className="d-flex align-items-center justify-content-between">
+                            <div>
+                              <h6 className="mb-2 fw-bold">Re-run Validation</h6>
+                              <p className="text-muted small mb-0">
+                                {processingStatus.orchestrationData?.issuesCount > 0 || processingStatus.orchestrationData?.hasWarnings
+                                  ? 'Issues were found. Re-running orchestration may help improve validation by re-reading files.'
+                                  : 'Re-run orchestration to refresh validation results.'
+                                }
+                              </p>
+                            </div>
+                            <div className="d-flex gap-2 align-items-center">
+                              <Form.Check 
+                                type="checkbox"
+                                id="force-reread-checkbox"
+                                label={<small>Force re-read files</small>}
+                                checked={forceReread}
+                                onChange={(e) => setForceReread(e.target.checked)}
+                                disabled={rerunningOrchestration}
+                                title="Force re-reading all PDF files from disk instead of using cached data"
+                              />
+                              <Button 
+                                variant={processingStatus.orchestrationData?.issuesCount > 0 ? 'warning' : 'outline-primary'}
+                                size="sm"
+                                onClick={handleRerunOrchestration}
+                                disabled={rerunningOrchestration}
+                                className="d-flex align-items-center"
+                              >
+                                {rerunningOrchestration ? (
+                                  <>
+                                    <Spinner animation="border" size="sm" className="me-2" />
+                                    Re-running...
+                                  </>
+                                ) : (
+                                  <>
+                                    <FiRefreshCw className="me-2" />
+                                    Re-run Orchestration
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        </Col>
+                      </Row>
+                    )}
+                  </Card.Body>
+                </Card>
+              </Col>
+            </Row>
+          )}
 
           <Card className="mt-5 border-0 shadow-sm">
             <Card.Body className="p-4">

@@ -69,6 +69,15 @@ const ResultsPage = () => {
   const [submissionToDelete, setSubmissionToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   
+  // State for detailed view modal
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedSubmission, setSelectedSubmission] = useState(null);
+  
+  // State for bulk selection and deletion
+  const [selectedSubmissions, setSelectedSubmissions] = useState(new Set());
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  
   // References
   const pollingIntervalRef = useRef(null);
   const timeoutsRef = useRef({});
@@ -336,6 +345,11 @@ const ResultsPage = () => {
     }
   };
   
+  // Clear selection when tab or search changes
+  useEffect(() => {
+    setSelectedSubmissions(new Set());
+  }, [activeTab, searchTerm]);
+  
   // Download Excel file with results
   const handleExportToExcel = async () => {
     try {
@@ -362,6 +376,120 @@ const ResultsPage = () => {
   const handleDeleteClick = (submission) => {
     setSubmissionToDelete(submission);
     setShowDeleteModal(true);
+  };
+  
+  // Handle detail view
+  const handleViewDetails = (submission) => {
+    setSelectedSubmission(submission);
+    setShowDetailModal(true);
+  };
+  
+  // Handle re-evaluation for submissions with score 0
+  const handleReEvaluate = async (submission) => {
+    try {
+      console.log(`Re-evaluating submission: ${submission._id}`);
+      
+      // Add to updating list
+      setUpdatingSubmissionIds(prev => [...prev, submission._id]);
+      
+      // Call the rerun API endpoint
+      const response = await axios.post(`/api/submissions/${submission._id}/rerun`);
+      
+      if (response.data.success) {
+        // Update the submission status to show it's being re-evaluated
+        dispatchSubmissions({
+          type: 'UPDATE_SINGLE',
+          submission: {
+            ...submission,
+            status: 'evaluating',
+            processingStatus: 'pending',
+            evaluationStatus: 'pending'
+          }
+        });
+        
+        // Start polling for this submission
+        setPollingActive(true);
+        
+        console.log('Re-evaluation started successfully');
+      }
+    } catch (error) {
+      console.error('Error re-evaluating submission:', error);
+      setError(`Failed to re-evaluate submission: ${error.response?.data?.error || error.message}`);
+      
+      // Remove from updating list if failed
+      setUpdatingSubmissionIds(prev => prev.filter(id => id !== submission._id));
+    }
+  };
+  
+  // Handle individual checkbox selection
+  const handleCheckboxChange = (submissionId) => {
+    const newSelected = new Set(selectedSubmissions);
+    if (newSelected.has(submissionId)) {
+      newSelected.delete(submissionId);
+    } else {
+      newSelected.add(submissionId);
+    }
+    setSelectedSubmissions(newSelected);
+  };
+  
+  // Handle select all checkbox
+  const handleSelectAll = (checked) => {
+    if (checked) {
+      const allIds = new Set(sortedSubmissions.map(sub => sub._id));
+      setSelectedSubmissions(allIds);
+    } else {
+      setSelectedSubmissions(new Set());
+    }
+  };
+  
+  // Handle bulk delete
+  const handleBulkDelete = () => {
+    if (selectedSubmissions.size === 0) return;
+    setShowBulkDeleteModal(true);
+  };
+  
+  // Confirm bulk delete
+  const handleBulkDeleteConfirm = async () => {
+    setBulkDeleting(true);
+    const failedDeletions = [];
+    const successfulDeletions = [];
+    
+    try {
+      // Delete submissions one by one
+      for (const submissionId of selectedSubmissions) {
+        try {
+          await axios.delete(`/api/submissions/${submissionId}`);
+          successfulDeletions.push(submissionId);
+        } catch (err) {
+          console.error(`Failed to delete submission ${submissionId}:`, err);
+          failedDeletions.push(submissionId);
+        }
+      }
+      
+      // Update state to remove successfully deleted submissions
+      if (successfulDeletions.length > 0) {
+        successfulDeletions.forEach(id => {
+          dispatchSubmissions({ type: 'DELETE_SUBMISSION', id });
+        });
+      }
+      
+      // Clear selection
+      setSelectedSubmissions(new Set());
+      setShowBulkDeleteModal(false);
+      
+      // Show feedback
+      if (failedDeletions.length > 0) {
+        setError(`Successfully deleted ${successfulDeletions.length} submission(s). Failed to delete ${failedDeletions.length} submission(s).`);
+      } else {
+        // Optionally show success message
+        console.log(`Successfully deleted ${successfulDeletions.length} submission(s)`);
+      }
+    } catch (error) {
+      console.error('Error during bulk deletion:', error);
+      setError('An error occurred during bulk deletion');
+    } finally {
+      setBulkDeleting(false);
+    }
   };
   
   // Handle delete confirmation and delete the submission
@@ -646,6 +774,16 @@ const ResultsPage = () => {
               <FiUpload className="me-2" /> 
               Upload Submission
             </Button>
+            {selectedSubmissions.size > 0 && (
+              <Button 
+                variant="danger"
+                onClick={handleBulkDelete}
+                className="d-flex align-items-center"
+              >
+                <FiTrash2 className="me-2" /> 
+                Delete Selected ({selectedSubmissions.size})
+              </Button>
+            )}
             <Button 
               variant="primary"
               onClick={handleExportToExcel}
@@ -663,6 +801,17 @@ const ResultsPage = () => {
         <Alert variant="danger" className="d-flex align-items-center shadow-sm border-0">
           <FiAlertCircle size={24} className="me-3 flex-shrink-0" />
           <div>{error}</div>
+        </Alert>
+      )}
+      
+      {/* Alert for submissions with score 0 */}
+      {completedSubmissions.filter(s => s.evaluationResult?.overallGrade === 0 || s.score === 0).length > 0 && (
+        <Alert variant="warning" className="d-flex align-items-center shadow-sm border-0">
+          <FiAlertCircle size={24} className="me-3 flex-shrink-0" />
+          <div>
+            <strong>Notice:</strong> {completedSubmissions.filter(s => s.evaluationResult?.overallGrade === 0 || s.score === 0).length} submission(s) received a score of 0. 
+            You can re-evaluate these submissions by clicking the <FiRefreshCw size={14} className="mx-1" /> button in the Actions column.
+          </div>
         </Alert>
       )}
       
@@ -789,13 +938,21 @@ const ResultsPage = () => {
               </div>
             </Card.Header>
             <Card.Body className="p-0">
-              <div className="table-responsive">
+              <div className="table-responsive" style={{ overflowX: 'auto' }}>
                 <Table hover className="results-table mb-0">
                   <thead>
                     <tr>
+                      <th style={{ width: '50px', minWidth: '50px' }}>
+                        <Form.Check
+                          type="checkbox"
+                          checked={sortedSubmissions.length > 0 && selectedSubmissions.size === sortedSubmissions.length}
+                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          aria-label="Select all submissions"
+                        />
+                      </th>
                       <th 
                         onClick={() => handleSort('studentId')}
-                        style={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer', minWidth: '150px' }}
                         className="user-select-none"
                       >
                         <div className="d-flex align-items-center">
@@ -804,26 +961,22 @@ const ResultsPage = () => {
                       </th>
                       <th 
                         onClick={() => handleSort('status')}
-                        style={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer', minWidth: '120px' }}
                         className="user-select-none"
                       >
                         <div className="d-flex align-items-center">
                           Status {getSortIcon('status')}
                         </div>
                       </th>
-                      <th 
-                        onClick={() => handleSort('score')}
-                        style={{ cursor: 'pointer' }}
-                        className="user-select-none"
-                      >
+                      <th style={{ minWidth: '100px' }}>
                         <div className="d-flex align-items-center">
                           Score {getSortIcon('score')}
                         </div>
                       </th>
-                      <th>Feedback</th>
+                      <th style={{ minWidth: '80px', textAlign: 'center' }}>Feedback</th>
                       <th 
                         onClick={() => handleSort('submitDate')}
-                        style={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer', minWidth: '140px' }}
                         className="user-select-none"
                       >
                         <div className="d-flex align-items-center">
@@ -832,14 +985,14 @@ const ResultsPage = () => {
                       </th>
                       <th 
                         onClick={() => handleSort('evaluatedDate')}
-                        style={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer', minWidth: '140px' }}
                         className="user-select-none"
                       >
                         <div className="d-flex align-items-center">
                           Evaluated {getSortIcon('evaluatedDate')}
                         </div>
                       </th>
-                      <th>Actions</th>
+                      <th style={{ minWidth: '80px', textAlign: 'center' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -853,10 +1006,18 @@ const ResultsPage = () => {
                           }
                         >
                           <td>
-                            <div className="d-flex align-items-center">
-                              <div className="fw-bold">{submission.studentId}</div>
+                            <Form.Check
+                              type="checkbox"
+                              checked={selectedSubmissions.has(submission._id)}
+                              onChange={() => handleCheckboxChange(submission._id)}
+                              aria-label={`Select submission ${submission.studentId}`}
+                            />
+                          </td>
+                          <td>
+                            <div className="d-flex align-items-center" title={`${submission.studentId}${submission.studentName ? ' (' + submission.studentName + ')' : ''}`}>
+                              <div className="fw-bold text-truncate">{submission.studentId}</div>
                               {submission.studentName && (
-                                <span className="text-muted ms-2">({submission.studentName})</span>
+                                <span className="text-muted ms-2 text-truncate">({submission.studentName})</span>
                               )}
                             </div>
                           </td>
@@ -864,20 +1025,17 @@ const ResultsPage = () => {
                           <td className={submission.justUpdated ? 'highlight-score-cell' : ''}>
                             {formatScore(submission)}
                           </td>
-                          <td>
+                          <td className="text-center">
                             {submission.evaluationStatus === 'completed' && submission.evaluationResult ? (
-                              <div className="small">
-                                {submission.evaluationResult.strengths && submission.evaluationResult.strengths.length > 0 && (
-                                  <div className="mb-1">
-                                    <Badge bg="success" className="me-1 opacity-75">Strength</Badge> {submission.evaluationResult.strengths[0]}
-                                  </div>
-                                )}
-                                {submission.evaluationResult.areasForImprovement && submission.evaluationResult.areasForImprovement.length > 0 && (
-                                  <div>
-                                    <Badge bg="warning" text="dark" className="me-1 opacity-75">Improve</Badge> {submission.evaluationResult.areasForImprovement[0]}
-                                  </div>
-                                )}
-                              </div>
+                              <Button 
+                                variant="outline-info" 
+                                size="sm"
+                                className="rounded-circle"
+                                onClick={() => handleViewDetails(submission)}
+                                title="View feedback details"
+                              >
+                                <FiInfo size={16} />
+                              </Button>
                             ) : '-'
                             }
                           </td>
@@ -897,21 +1055,41 @@ const ResultsPage = () => {
                               </div>
                             ) : '-'}
                           </td>
-                          <td>
-                            <Button 
-                              variant="outline-danger" 
-                              size="sm"
-                              className="rounded-circle"
-                              onClick={() => handleDeleteClick(submission)}
-                            >
-                              <FiTrash2 size={16} />
-                            </Button>
+                          <td className="text-center">
+                            <div className="d-flex gap-2 justify-content-center">
+                              {/* Re-evaluate button for score 0 */}
+                              {submission.evaluationStatus === 'completed' && 
+                               submission.evaluationResult && 
+                               (submission.evaluationResult.overallGrade === 0 || submission.score === 0) && (
+                                <Button 
+                                  variant="outline-warning" 
+                                  size="sm"
+                                  className="rounded-circle"
+                                  onClick={() => handleReEvaluate(submission)}
+                                  title="Re-evaluate submission (score is 0)"
+                                  disabled={updatingSubmissionIds.includes(submission._id)}
+                                >
+                                  <FiRefreshCw size={16} />
+                                </Button>
+                              )}
+                              
+                              {/* Delete button */}
+                              <Button 
+                                variant="outline-danger" 
+                                size="sm"
+                                className="rounded-circle"
+                                onClick={() => handleDeleteClick(submission)}
+                                title="Delete submission"
+                              >
+                                <FiTrash2 size={16} />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="7" className="text-center py-4">
+                        <td colSpan="8" className="text-center py-4">
                           <p className="mb-0 text-muted">No submissions match your search criteria</p>
                         </td>
                       </tr>
@@ -964,6 +1142,260 @@ const ResultsPage = () => {
         </Modal.Footer>
       </Modal>
       
+      {/* Bulk Delete Confirmation Modal */}
+      <Modal show={showBulkDeleteModal} onHide={() => setShowBulkDeleteModal(false)}>
+        <Modal.Header closeButton className="border-0">
+          <Modal.Title className="fw-bold">Delete Multiple Submissions</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <div className="text-center mb-4">
+            <div className="d-inline-flex justify-content-center align-items-center bg-danger bg-opacity-10 rounded-circle p-3 mb-3">
+              <FiTrash2 size={32} className="text-danger" />
+            </div>
+            <h5>Are you sure you want to delete {selectedSubmissions.size} submission(s)?</h5>
+            <p className="text-muted">The following submissions will be deleted:</p>
+            <div className="text-start mt-3" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+              {submissions
+                .filter(sub => selectedSubmissions.has(sub._id))
+                .map(sub => (
+                  <div key={sub._id} className="border-bottom py-2">
+                    <strong>{sub.studentId}</strong>
+                    {sub.studentName && <span className="text-muted"> - {sub.studentName}</span>}
+                  </div>
+                ))}
+            </div>
+          </div>
+          <Alert variant="warning" className="d-flex">
+            <FiInfo className="mt-1 me-2 flex-shrink-0" />
+            <div>This action cannot be undone. All selected submissions will be permanently removed.</div>
+          </Alert>
+        </Modal.Body>
+        <Modal.Footer className="border-0">
+          <Button variant="outline-secondary" onClick={() => setShowBulkDeleteModal(false)}>
+            Cancel
+          </Button>
+          <Button 
+            variant="danger" 
+            onClick={handleBulkDeleteConfirm}
+            disabled={bulkDeleting}
+          >
+            {bulkDeleting ? (
+              <>
+                <Spinner size="sm" className="me-2" animation="border" />
+                Deleting...
+              </>
+            ) : `Delete ${selectedSubmissions.size} Submission(s)`}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+      
+      {/* Detailed View Modal */}
+      <Modal show={showDetailModal} onHide={() => setShowDetailModal(false)} size="xl">
+        <Modal.Header closeButton className="border-0 bg-primary text-white">
+          <Modal.Title className="fw-bold">
+            <FiInfo className="me-2" />
+            Detailed Evaluation Breakdown
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {selectedSubmission && (
+            <div>
+              {/* Student Info */}
+              <Card className="mb-4 border-0 shadow-sm">
+                <Card.Body>
+                  <Row>
+                    <Col md={6}>
+                      <h6 className="text-muted mb-1">Student ID</h6>
+                      <p className="fw-bold mb-3">{selectedSubmission.studentId}</p>
+                    </Col>
+                    <Col md={6}>
+                      <h6 className="text-muted mb-1">Student Name</h6>
+                      <p className="fw-bold mb-3">{selectedSubmission.studentName || 'N/A'}</p>
+                    </Col>
+                    <Col md={6}>
+                      <h6 className="text-muted mb-1">Overall Score</h6>
+                      <h4 className="fw-bold text-primary mb-0">
+                        {selectedSubmission.evaluationResult?.overallGrade || 0} / {selectedSubmission.evaluationResult?.totalPossible || 0}
+                      </h4>
+                    </Col>
+                    <Col md={6}>
+                      <h6 className="text-muted mb-1">Percentage</h6>
+                      <h4 className="fw-bold text-success mb-0">
+                        {selectedSubmission.evaluationResult?.totalPossible 
+                          ? ((selectedSubmission.evaluationResult.overallGrade / selectedSubmission.evaluationResult.totalPossible) * 100).toFixed(1)
+                          : 0}%
+                      </h4>
+                    </Col>
+                  </Row>
+                </Card.Body>
+              </Card>
+
+              {/* Question-Level Breakdown */}
+              {selectedSubmission.evaluationResult?.questionScores && selectedSubmission.evaluationResult.questionScores.length > 0 ? (
+                <div>
+                  <h5 className="mb-3 fw-bold">Question-Level Breakdown</h5>
+                  {selectedSubmission.evaluationResult.questionScores.map((qScore, idx) => (
+                    <Card key={idx} className="mb-3 border-0 shadow-sm">
+                      <Card.Header className="bg-light">
+                        <div className="d-flex justify-content-between align-items-center">
+                          <h6 className="mb-0 fw-bold">Question {qScore.questionNumber}</h6>
+                          <Badge bg="primary" className="fs-6">
+                            {qScore.earnedScore} / {qScore.maxScore}
+                          </Badge>
+                        </div>
+                        {qScore.questionText && (
+                          <small className="text-muted">{qScore.questionText}</small>
+                        )}
+                      </Card.Header>
+                      <Card.Body>
+                        {qScore.subsections && qScore.subsections.length > 0 ? (
+                          <div>
+                            <Table size="sm" className="mb-0">
+                              <thead>
+                                <tr>
+                                  <th>Subsection</th>
+                                  <th>Description</th>
+                                  <th className="text-center">Score</th>
+                                  <th>Feedback</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {qScore.subsections.map((subsec, subIdx) => (
+                                  <tr key={subIdx}>
+                                    <td className="fw-bold">{qScore.questionNumber}{subsec.subsectionNumber}</td>
+                                    <td>{subsec.subsectionText || '-'}</td>
+                                    <td className="text-center">
+                                      <Badge bg={subsec.earnedScore === subsec.maxScore ? 'success' : subsec.earnedScore > subsec.maxScore / 2 ? 'warning' : 'danger'}>
+                                        {subsec.earnedScore} / {subsec.maxScore}
+                                      </Badge>
+                                    </td>
+                                    <td>{subsec.feedback || 'No feedback'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </Table>
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="mb-2"><strong>Feedback:</strong></p>
+                            <p className="text-muted mb-0">{qScore.feedback || 'No feedback provided'}</p>
+                          </div>
+                        )}
+                      </Card.Body>
+                    </Card>
+                  ))}
+                </div>
+              ) : selectedSubmission.evaluationResult?.criteriaGrades && selectedSubmission.evaluationResult.criteriaGrades.length > 0 ? (
+                <div>
+                  <h5 className="mb-3 fw-bold">Criteria Breakdown</h5>
+                  <Alert variant="info" className="mb-3">
+                    <FiInfo className="me-2" />
+                    This submission was evaluated using an older format. Showing criteria-based grading.
+                  </Alert>
+                  <Table striped bordered hover responsive>
+                    <thead>
+                      <tr>
+                        <th>Question</th>
+                        <th>Criterion</th>
+                        <th className="text-center">Score</th>
+                        <th>Feedback</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedSubmission.evaluationResult.criteriaGrades.map((criteria, idx) => (
+                        <tr key={idx}>
+                          <td className="fw-bold">{criteria.questionNumber || 'N/A'}</td>
+                          <td>{criteria.criterionName || 'N/A'}</td>
+                          <td className="text-center">
+                            <Badge bg={criteria.score === criteria.maxScore ? 'success' : criteria.score > criteria.maxScore / 2 ? 'warning' : 'danger'}>
+                              {criteria.score} / {criteria.maxScore}
+                            </Badge>
+                          </td>
+                          <td>{criteria.feedback || 'No feedback provided'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              ) : (
+                <Alert variant="warning">
+                  <FiInfo className="me-2" />
+                  No detailed breakdown available for this submission.
+                </Alert>
+              )}
+
+              {/* General Feedback */}
+              {(selectedSubmission.evaluationResult?.strengths?.length > 0 ||
+                selectedSubmission.evaluationResult?.areasForImprovement?.length > 0 ||
+                selectedSubmission.evaluationResult?.suggestions?.length > 0) && (
+                <div className="mt-4">
+                  <h5 className="mb-3 fw-bold">General Feedback</h5>
+                  
+                  {selectedSubmission.evaluationResult.strengths?.length > 0 && (
+                    <Card className="mb-3 border-success">
+                      <Card.Header className="bg-success bg-opacity-10 border-success">
+                        <h6 className="mb-0 text-success fw-bold">
+                          <FiCheckCircle className="me-2" />
+                          Strengths
+                        </h6>
+                      </Card.Header>
+                      <Card.Body>
+                        <ul className="mb-0">
+                          {selectedSubmission.evaluationResult.strengths.map((strength, idx) => (
+                            <li key={idx}>{strength}</li>
+                          ))}
+                        </ul>
+                      </Card.Body>
+                    </Card>
+                  )}
+
+                  {selectedSubmission.evaluationResult.areasForImprovement?.length > 0 && (
+                    <Card className="mb-3 border-warning">
+                      <Card.Header className="bg-warning bg-opacity-10 border-warning">
+                        <h6 className="mb-0 text-warning fw-bold">
+                          <FiAlertCircle className="me-2" />
+                          Areas for Improvement
+                        </h6>
+                      </Card.Header>
+                      <Card.Body>
+                        <ul className="mb-0">
+                          {selectedSubmission.evaluationResult.areasForImprovement.map((area, idx) => (
+                            <li key={idx}>{area}</li>
+                          ))}
+                        </ul>
+                      </Card.Body>
+                    </Card>
+                  )}
+
+                  {selectedSubmission.evaluationResult.suggestions?.length > 0 && (
+                    <Card className="mb-3 border-info">
+                      <Card.Header className="bg-info bg-opacity-10 border-info">
+                        <h6 className="mb-0 text-info fw-bold">
+                          <FiInfo className="me-2" />
+                          Suggestions
+                        </h6>
+                      </Card.Header>
+                      <Card.Body>
+                        <ul className="mb-0">
+                          {selectedSubmission.evaluationResult.suggestions.map((suggestion, idx) => (
+                            <li key={idx}>{suggestion}</li>
+                          ))}
+                        </ul>
+                      </Card.Body>
+                    </Card>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </Modal.Body>
+        <Modal.Footer className="border-0">
+          <Button variant="secondary" onClick={() => setShowDetailModal(false)}>
+            Close
+          </Button>
+        </Modal.Footer>
+      </Modal>
+      
       {/* Add CSS for highlighting updated elements */}
       <style jsx="true">{`
         .highlight-updated-row {
@@ -976,15 +1408,62 @@ const ResultsPage = () => {
           font-weight: bold;
         }
         
+        .results-table {
+          table-layout: fixed;
+          width: 100%;
+        }
+        
         .results-table th {
           background-color: #f8f9fa;
           font-weight: 600;
           padding: 15px;
+          white-space: nowrap;
         }
         
         .results-table td {
           padding: 15px;
           vertical-align: middle;
+          max-width: 250px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        
+        /* Specific column width constraints */
+        .results-table td:nth-child(2) {
+          /* Student ID column */
+          max-width: 180px;
+        }
+        
+        .results-table td:nth-child(5) {
+          /* Feedback column - now just has info button */
+          max-width: 80px;
+          text-align: center;
+        }
+        
+        .results-table td:nth-child(6),
+        .results-table td:nth-child(7) {
+          /* Date columns */
+          max-width: 150px;
+        }
+        
+        .results-table td:nth-child(3),
+        .results-table td:nth-child(4) {
+          /* Status and Score columns */
+          max-width: 120px;
+        }
+        
+        .results-table td:nth-child(8) {
+          /* Actions column - now just has delete button */
+          max-width: 80px;
+          text-align: center;
+          white-space: nowrap;
+        }
+        
+        .text-truncate {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
         
         @keyframes highlight-fade {

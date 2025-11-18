@@ -11,7 +11,8 @@ const {
   exportToExcel,
   deleteSubmission,
   getSubmissionPdf,
-  getSubmissionFileInfo
+  getSubmissionFileInfo,
+  rerunSubmission
 } = require('../controllers/submissionController');
 
 // Configure multer for storing uploaded submissions
@@ -71,6 +72,9 @@ router.get('/single/:id/pdf', getSubmissionPdf);
 
 // GET /api/submissions/single/:id/file-info - Get file information for a submission
 router.get('/single/:id/file-info', getSubmissionFileInfo);
+
+// POST /api/submissions/:id/rerun - Re-run processing for a failed submission
+router.post('/:id/rerun', rerunSubmission);
 
 // DELETE /api/submissions/:id - Delete a submission
 router.delete('/:id', deleteSubmission);

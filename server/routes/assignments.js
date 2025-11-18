@@ -9,7 +9,8 @@ const {
   createAssignment, 
   updateAssignment, 
   deleteAssignment,
-  getProcessingStatus
+  getProcessingStatus,
+  rerunOrchestration
 } = require('../controllers/assignmentController');
 
 // Configure multer for storing uploaded files
@@ -49,6 +50,9 @@ router.get('/:id', getAssignmentById);
 
 // GET /api/assignments/:id/status - Get assignment processing status
 router.get('/:id/status', getProcessingStatus);
+
+// POST /api/assignments/:id/rerun-orchestration - Re-run orchestration for an assignment
+router.post('/:id/rerun-orchestration', rerunOrchestration);
 
 // POST /api/assignments - Create new assignment
 // Multiple file uploads for assignment, solution, and rubric

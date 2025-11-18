@@ -169,21 +169,47 @@ const AssignmentList = () => {
 
   const getStatusBadge = (assignmentId) => {
     const status = processingStatuses[assignmentId]?.evaluationReadyStatus;
+    const orchestrationData = processingStatuses[assignmentId]?.orchestrationData;
+    const orchestrationStatus = processingStatuses[assignmentId]?.orchestrationStatus;
     
     if (!status) return null;
+    
+    const showOrchestrationBadge = orchestrationStatus === 'completed' && orchestrationData;
     
     switch (status) {
       case 'ready':
         return (
-          <Badge bg="success" className="d-inline-flex align-items-center px-2 py-1">
-            <FiCheckCircle className="me-1" /> Ready
-          </Badge>
+          <div className="d-flex flex-column align-items-end gap-1">
+            <Badge bg="success" className="d-inline-flex align-items-center px-2 py-1">
+              <FiCheckCircle className="me-1" /> Ready
+            </Badge>
+            {showOrchestrationBadge && (
+              <Badge 
+                bg={orchestrationData.completenessScore >= 80 ? 'success' : orchestrationData.completenessScore >= 60 ? 'warning' : 'secondary'}
+                className="small"
+                title="Orchestration completeness score"
+              >
+                {orchestrationData.completenessScore}% Validated
+              </Badge>
+            )}
+          </div>
         );
       case 'partial':
         return (
-          <Badge bg="warning" text="dark" className="d-inline-flex align-items-center px-2 py-1">
-            <FiInfo className="me-1" /> Partial
-          </Badge>
+          <div className="d-flex flex-column align-items-end gap-1">
+            <Badge bg="warning" text="dark" className="d-inline-flex align-items-center px-2 py-1">
+              <FiInfo className="me-1" /> Partial
+            </Badge>
+            {showOrchestrationBadge && (
+              <Badge 
+                bg={orchestrationData.completenessScore >= 80 ? 'success' : orchestrationData.completenessScore >= 60 ? 'warning' : 'secondary'}
+                className="small"
+                title="Orchestration completeness score"
+              >
+                {orchestrationData.completenessScore}% Validated
+              </Badge>
+            )}
+          </div>
         );
       case 'not_ready':
         return (

@@ -44,7 +44,7 @@ async function convertIpynbToPdf(ipynbPath) {
     execSync(nbconvertCommand, { 
       stdio: 'inherit',
       cwd: dir,
-      timeout: 60000 // 60 second timeout
+      timeout: 120000 // 2 minutes timeout for large notebooks with many plots
     });
 
     // Check if HTML was created
@@ -59,21 +59,49 @@ async function convertIpynbToPdf(ipynbPath) {
     
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'] // For server environments
+      args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage', // Overcome limited resource problems
+        '--disable-gpu' // Applicable to Windows OS only
+      ]
     });
     
     const page = await browser.newPage();
     
+    // Set default timeout for all operations (important for large files)
+    page.setDefaultTimeout(120000); // 2 minutes for all operations
+    page.setDefaultNavigationTimeout(120000); // 2 minutes for navigation
+    
     // Load the HTML file
     const htmlFileUrl = `file://${path.resolve(htmlPath)}`;
     console.log(`Loading HTML from: ${htmlFileUrl}`);
+    console.log(`⏱️  Allowing up to 2 minutes for large file rendering...`);
+    
+    // For very large files (>10MB), use 'load' instead of 'networkidle0' to avoid timeout
+    const htmlStats = fs.statSync(htmlPath);
+    const isLargeFile = htmlStats.size > 10 * 1024 * 1024; // 10MB threshold
+    
+    if (isLargeFile) {
+      console.log(`📊 Large HTML file detected (${(htmlStats.size / 1024 / 1024).toFixed(2)} MB)`);
+      console.log(`⚡ Using optimized loading strategy for large files...`);
+    }
     
     await page.goto(htmlFileUrl, { 
-      waitUntil: 'networkidle0',
-      timeout: 30000 // 30 second timeout
+      waitUntil: isLargeFile ? 'domcontentloaded' : 'networkidle0', // Faster for large files
+      timeout: 120000 // 2 minutes timeout for large notebooks
     });
     
+    // For large files, wait a bit more for images to render
+    if (isLargeFile) {
+      console.log(`⏳ Waiting 3 seconds for images and plots to fully render...`);
+      await new Promise(resolve => setTimeout(resolve, 3000)); // 3 second grace period for image rendering
+    }
+    
+    console.log(`📄 Page loaded successfully, generating PDF...`);
+    
     // Generate PDF with good settings for notebook content
+    // Note: Large notebooks may take time to render all images and plots
     await page.pdf({ 
       path: pdfPath, 
       format: 'A4',
@@ -84,8 +112,11 @@ async function convertIpynbToPdf(ipynbPath) {
         left: '0.5in'
       },
       printBackground: true, // Include background colors and images
-      preferCSSPageSize: false
+      preferCSSPageSize: false,
+      timeout: 120000 // 2 minutes timeout for PDF generation
     });
+    
+    console.log(`✅ PDF generated successfully`);
     
     await browser.close();
 

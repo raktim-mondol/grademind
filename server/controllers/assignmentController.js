@@ -5,7 +5,8 @@ const { extractTextFromPDF } = require('../utils/pdfExtractor');
 const { 
   assignmentProcessingQueue,
   rubricProcessingQueue,
-  solutionProcessingQueue
+  solutionProcessingQueue,
+  orchestrationQueue
 } = require('../config/queue');
 const { isConnected } = require('../config/db');
 
@@ -384,10 +385,20 @@ exports.getProcessingStatus = async (req, res) => {
       assignmentProcessingStatus: assignment.processingStatus,
       rubricProcessingStatus: assignment.rubricProcessingStatus,
       solutionProcessingStatus: assignment.solutionProcessingStatus,
+      orchestrationStatus: assignment.orchestrationStatus || 'not_needed',  // Changed default
       processingError: assignment.processingError,
       rubricProcessingError: assignment.rubricProcessingError,
       solutionProcessingError: assignment.solutionProcessingError,
+      orchestrationError: assignment.orchestrationError,
       evaluationReadyStatus: getEvaluationReadiness(assignment),
+      orchestrationData: assignment.orchestratedData ? {
+        completenessScore: assignment.orchestratedData.validation?.completenessScore || 0,
+        isValid: assignment.orchestratedData.validation?.isValid || false,
+        hasWarnings: assignment.orchestratedData.validation?.hasWarnings || false,
+        issuesCount: assignment.orchestratedData.validation?.issues?.length || 0,
+        recommendationsCount: assignment.orchestratedData.recommendations?.length || 0
+      } : null,
+      validationResults: assignment.validationResults || null,
       lastUpdated: assignment.updatedAt
     });
   } catch (error) {
@@ -403,10 +414,16 @@ function getEvaluationReadiness(assignment) {
   }
   
   if (assignment.processingStatus === 'completed') {
-    if (
-      (assignment.rubricProcessingStatus === 'completed' || assignment.rubricProcessingStatus === 'not_applicable') &&
-      (assignment.solutionProcessingStatus === 'completed' || assignment.solutionProcessingStatus === 'not_applicable')
-    ) {
+    const rubricReady = assignment.rubricProcessingStatus === 'completed' || assignment.rubricProcessingStatus === 'not_applicable';
+    const solutionReady = assignment.solutionProcessingStatus === 'completed' || assignment.solutionProcessingStatus === 'not_applicable';
+    
+    if (rubricReady && solutionReady) {
+      // If orchestration is being used and completed, return ready
+      // If orchestration failed, still return ready (it's optional for evaluation)
+      // If orchestration is processing, return partial
+      if (assignment.orchestrationStatus === 'processing') {
+        return 'partial';
+      }
       return 'ready';
     }
     return 'partial';
@@ -414,3 +431,59 @@ function getEvaluationReadiness(assignment) {
   
   return 'not_ready';
 }
+
+// Re-run orchestration for an assignment
+exports.rerunOrchestration = async (req, res) => {
+  try {
+    const assignmentId = req.params.id;
+    const { forceReread } = req.body; // Optional: force re-reading of files
+    
+    console.log(`Re-running orchestration for assignment ${assignmentId}`);
+    console.log(`Force re-read files: ${forceReread || false}`);
+    
+    const assignment = await Assignment.findById(assignmentId);
+    
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found' });
+    }
+    
+    // Check if all required processing is complete
+    if (assignment.processingStatus !== 'completed') {
+      return res.status(400).json({ 
+        error: 'Assignment must be fully processed before re-running orchestration',
+        currentStatus: assignment.processingStatus
+      });
+    }
+    
+    // Reset orchestration status and enable it
+    await Assignment.findByIdAndUpdate(assignmentId, {
+      orchestrationStatus: 'pending',  // Enable and reset to pending
+      orchestrationError: null,
+      orchestrationStartedAt: null,
+      orchestrationCompletedAt: null
+    });
+    
+    console.log(`Orchestration status set to pending (enabled) for assignment ${assignmentId}`);
+    
+    // Queue orchestration job with force re-read option
+    await orchestrationQueue.createJob({
+      assignmentId: assignmentId,
+      forceReread: forceReread || false  // Pass flag to orchestration processor
+    }).save();
+    
+    console.log(`Orchestration job queued for assignment ${assignmentId}`);
+    
+    res.status(200).json({ 
+      message: 'Orchestration re-run initiated successfully',
+      assignmentId: assignmentId,
+      forceReread: forceReread || false
+    });
+    
+  } catch (error) {
+    console.error('Error re-running orchestration:', error);
+    res.status(500).json({ 
+      error: 'An error occurred while re-running orchestration',
+      details: error.message 
+    });
+  }
+};

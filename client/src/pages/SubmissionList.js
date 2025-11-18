@@ -243,6 +243,41 @@ const SubmissionList = () => {
     }
   };
   
+  // Handle re-evaluation for submissions with score 0
+  const handleReEvaluate = async (submission) => {
+    try {
+      console.log(`Re-evaluating submission: ${submission._id}`);
+      
+      // Add to updating list
+      setUpdatingSubmissionIds(prev => [...prev, submission._id]);
+      
+      // Call the rerun API endpoint
+      const response = await axios.post(`/api/submissions/${submission._id}/rerun`);
+      
+      if (response.data.success) {
+        // Update the submission status to show it's being re-evaluated
+        dispatchSubmissions({
+          type: 'UPDATE_SINGLE',
+          submission: {
+            ...submission,
+            status: 'evaluating'
+          }
+        });
+        
+        // Start polling for this submission
+        setPollingActive(true);
+        
+        console.log('Re-evaluation started successfully');
+      }
+    } catch (error) {
+      console.error('Error re-evaluating submission:', error);
+      setError(`Failed to re-evaluate submission: ${error.response?.data?.error || error.message}`);
+      
+      // Remove from updating list if failed
+      setUpdatingSubmissionIds(prev => prev.filter(id => id !== submission._id));
+    }
+  };
+  
   if (loading) {
     return (
       <Container>
@@ -354,13 +389,29 @@ const SubmissionList = () => {
                       </td>
                       <td>{new Date(submission.submittedAt).toLocaleString()}</td>
                       <td>
-                        <Button 
-                          variant="outline-primary" 
-                          size="sm"
-                          onClick={() => navigate(`/submissions/${submission._id}/view`)}
-                        >
-                          <FiBarChart2 /> View
-                        </Button>
+                        <div className="d-flex gap-2">
+                          {/* Re-evaluate button for score 0 */}
+                          {submission.status === 'completed' && 
+                           (submission.score === 0) && (
+                            <Button 
+                              variant="outline-warning" 
+                              size="sm"
+                              onClick={() => handleReEvaluate(submission)}
+                              title="Re-evaluate submission (score is 0)"
+                              disabled={updatingSubmissionIds.includes(submission._id)}
+                            >
+                              <FiRefreshCw size={14} />
+                            </Button>
+                          )}
+                          
+                          <Button 
+                            variant="outline-primary" 
+                            size="sm"
+                            onClick={() => navigate(`/submissions/${submission._id}/view`)}
+                          >
+                            <FiBarChart2 /> View
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
