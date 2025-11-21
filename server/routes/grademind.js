@@ -253,13 +253,6 @@ router.post('/evaluate', upload.single('file'), async (req, res) => {
     }
     lastCallTime = Date.now();
 
-    // Truncate student content if too large to prevent empty responses
-    const maxContentLength = 100000;
-    if (studentContent.length > maxContentLength) {
-      console.log(`⚠️ Truncating student content from ${studentContent.length} to ${maxContentLength} chars`);
-      studentContent = studentContent.substring(0, maxContentLength) + '\n\n... [content truncated due to length]';
-    }
-
     // Get the model with proper JSON response configuration
     const modelName = config.selectedModels?.[0] || 'gemini-2.5-flash-preview-05-20';
     const model = genAI.getGenerativeModel({
@@ -275,6 +268,7 @@ router.post('/evaluate', upload.single('file'), async (req, res) => {
     const prompt = buildEvaluationPrompt(config, studentContent);
 
     console.log(`📤 Sending evaluation request to Gemini (${modelName})`);
+    console.log(`   Content length: ${studentContent.length} chars`);
     console.log(`   Prompt length: ${prompt.length} chars`);
 
     // Call Gemini
