@@ -65,7 +65,6 @@ router.post('/:id/rerun-orchestration', rerunOrchestration);
 router.post('/',
   upload.fields([
     { name: 'assignment', maxCount: 1 },
-    { name: 'questions', maxCount: 1 },
     { name: 'solution', maxCount: 1 },
     { name: 'rubric', maxCount: 1 }
   ]),
@@ -76,7 +75,6 @@ router.post('/',
 router.put('/:id',
   upload.fields([
     { name: 'assignment', maxCount: 1 },
-    { name: 'questions', maxCount: 1 },
     { name: 'solution', maxCount: 1 },
     { name: 'rubric', maxCount: 1 }
   ]),
