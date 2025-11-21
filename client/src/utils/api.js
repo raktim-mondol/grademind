@@ -1,8 +1,13 @@
 import axios from 'axios';
 
+// Get API base URL from environment variable or use relative path for same-origin
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+
+console.log('API Base URL:', API_BASE_URL);
+
 // Create axios instance
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
