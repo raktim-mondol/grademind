@@ -23,7 +23,13 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fieldSize: 50 * 1024 * 1024, // 50MB for form fields (config JSON with rubric/solution)
+    fileSize: 50 * 1024 * 1024   // 50MB for uploaded files
+  }
+});
 
 // Rate limiting
 const RATE_LIMIT_DELAY = 12000;
