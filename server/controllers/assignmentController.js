@@ -13,6 +13,10 @@ const { getUserId, isAuthenticated, verifyOwnership } = require('../utils/authHe
 
 // Create a new assignment
 exports.createAssignment = async (req, res) => {
+  console.log('📥 [API] POST /api/assignments - Creating new assignment');
+  console.log(`   Request body keys: ${Object.keys(req.body).join(', ')}`);
+  console.log(`   Files uploaded: ${req.files ? Object.keys(req.files).join(', ') : 'none'}`);
+
   // Wrap the entire function body in a try...catch block for better top-level error handling
   try {
     // Check database connection first
@@ -101,14 +105,16 @@ exports.createAssignment = async (req, res) => {
     // Process assignment PDF directly with Gemini and queue jobs
     try {
       // Queue assignment for processing with PDF file path
-      await assignmentProcessingQueue.createJob({
+      console.log('📋 Queueing assignment for processing...');
+      const job = await assignmentProcessingQueue.createJob({
         assignmentId: assignment._id,
         pdfFilePath: assignmentFilePath,
         questionStructure: parsedQuestionStructure,
         totalPoints: assignment.totalPoints
       }).save();
 
-      console.log('Assignment queued for PDF processing:', assignment._id);
+      console.log('✅ Assignment queued for PDF processing:', assignment._id);
+      console.log(`   Job ID: ${job?.id || 'unknown'}`);
 
       // Process rubric if available
       if (rubricFilePath) {
