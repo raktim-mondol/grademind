@@ -1,10 +1,11 @@
 /**
  * Assignment Document Processor
- * Processes assignment documents using Gemini API
+ * Processes assignment documents using Landing AI for extraction and Gemini API for processing
  * Also extracts rubric information when no separate rubric is provided
  */
 const { assignmentProcessingQueue, rubricProcessingQueue } = require('../config/queue');
-const { processAssignmentPDF, extractRubricFromAssignmentPDF } = require('../utils/geminiService');
+const { processAssignmentPDF, extractRubricFromAssignmentPDF, processAssignmentContent, extractRubricFromContent } = require('../utils/geminiService');
+const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
 const { Assignment } = require('../models/assignment');
 const { updateAssignmentEvaluationReadiness, checkAndTriggerOrchestration } = require('../utils/assignmentUtils');
 const mongoose = require('mongoose');
@@ -25,16 +26,42 @@ assignmentProcessingQueue.process(async (job) => {
       processingStatus: 'processing',
       processingStartedAt: new Date()
     });
-    
-    // Process the assignment document PDF using Gemini API
-    const processedData = await processAssignmentPDF(pdfFilePath);
-    
-    // Update the assignment in the database with the processed data
-    await Assignment.findByIdAndUpdate(assignmentId, {
-      processedData,
-      processingStatus: 'completed',
-      processingCompletedAt: new Date()
-    });
+
+    let processedData;
+    let extractedContent = null;
+
+    // Check if Landing AI is configured for two-stage processing
+    if (isLandingAIConfigured()) {
+      console.log(`🔄 Using two-stage processing for assignment ${assignmentId}`);
+
+      // Stage 1: Extract content via Landing AI
+      console.log(`📄 Stage 1: Extracting PDF content via Landing AI...`);
+      extractedContent = await extractWithRetry(pdfFilePath);
+
+      // Stage 2: Process extracted content via Gemini
+      console.log(`🤖 Stage 2: Processing content via Gemini...`);
+      const formattedContent = formatExtractedContent(extractedContent);
+      processedData = await processAssignmentContent(formattedContent);
+
+      // Update with extracted content
+      await Assignment.findByIdAndUpdate(assignmentId, {
+        extractedContent,
+        processedData,
+        processingStatus: 'completed',
+        processingCompletedAt: new Date()
+      });
+    } else {
+      // Fallback: Direct PDF processing via Gemini
+      console.log(`🔄 Using direct PDF processing for assignment ${assignmentId} (Landing AI not configured)`);
+      processedData = await processAssignmentPDF(pdfFilePath);
+
+      // Update the assignment in the database with the processed data
+      await Assignment.findByIdAndUpdate(assignmentId, {
+        processedData,
+        processingStatus: 'completed',
+        processingCompletedAt: new Date()
+      });
+    }
     
     // Check if the assignment has a separate rubric file
     const assignment = await Assignment.findById(assignmentId);
@@ -50,10 +77,19 @@ assignmentProcessingQueue.process(async (job) => {
           rubricProcessingStatus: 'processing',
           rubricProcessingStartedAt: new Date()
         });
-        
-        // Extract rubric from assignment PDF
-        const extractedRubric = await extractRubricFromAssignmentPDF(pdfFilePath, assignment.totalPoints);
-        
+
+        let extractedRubric;
+
+        // Use extracted content if available (two-stage processing)
+        if (extractedContent && isLandingAIConfigured()) {
+          console.log(`🔄 Extracting rubric from already-extracted assignment content...`);
+          const formattedContent = formatExtractedContent(extractedContent);
+          extractedRubric = await extractRubricFromContent(formattedContent, assignment.totalPoints);
+        } else {
+          // Fallback: Extract rubric from assignment PDF directly
+          extractedRubric = await extractRubricFromAssignmentPDF(pdfFilePath, assignment.totalPoints);
+        }
+
         // Update assignment with extracted rubric
         await Assignment.findByIdAndUpdate(assignmentId, {
           processedRubric: extractedRubric,

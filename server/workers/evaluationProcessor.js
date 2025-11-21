@@ -1,9 +1,10 @@
 /**
  * Evaluation Processor
- * Evaluates student submissions using Google Gemini API
+ * Evaluates student submissions using Landing AI for extraction and Google Gemini API for evaluation
  */
 const { evaluationQueue } = require('../config/queue');
-const { evaluateSubmission, evaluateProjectSubmission } = require('../utils/geminiService');
+const { evaluateSubmission, evaluateProjectSubmission, evaluateWithExtractedContent } = require('../utils/geminiService');
+const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
 const { Submission } = require('../models/submission');
 const { ProjectSubmission } = require('../models/projectSubmission');
 const mongoose = require('mongoose');
@@ -152,16 +153,45 @@ evaluationQueue.process(async (job) => {
       }
     }
     
-    // Use the unified evaluation approach - .ipynb files will be converted to PDF internally
-    const { evaluateSubmission } = require('../utils/geminiService');
-    const evaluationResult = await evaluateSubmission(
-      assignmentData,
-      rubricData,
-      solutionData,
-      filePathForEvaluation,
-      studentId,
-      orchestratedData  // Pass orchestrated data to evaluation
-    );
+    let evaluationResult;
+    let extractedSubmission = null;
+
+    // Check if Landing AI is configured for two-stage processing
+    if (isLandingAIConfigured()) {
+      console.log(`🔄 Using two-stage processing for submission ${submissionId}`);
+
+      // Stage 1: Extract submission content via Landing AI
+      console.log(`📄 Stage 1: Extracting submission PDF content via Landing AI...`);
+      extractedSubmission = await extractWithRetry(filePathForEvaluation);
+
+      // Save extracted content to submission
+      await Submission.findByIdAndUpdate(submissionId, {
+        extractedContent: extractedSubmission
+      });
+
+      // Stage 2: Evaluate using extracted content via Gemini
+      console.log(`🤖 Stage 2: Evaluating submission via Gemini...`);
+      const formattedSubmission = formatExtractedContent(extractedSubmission);
+      evaluationResult = await evaluateWithExtractedContent(
+        assignmentData,
+        rubricData,
+        solutionData,
+        formattedSubmission,
+        studentId
+      );
+    } else {
+      // Fallback: Direct PDF evaluation via Gemini
+      console.log(`🔄 Using direct PDF evaluation for submission ${submissionId} (Landing AI not configured)`);
+      const { evaluateSubmission } = require('../utils/geminiService');
+      evaluationResult = await evaluateSubmission(
+        assignmentData,
+        rubricData,
+        solutionData,
+        filePathForEvaluation,
+        studentId,
+        orchestratedData  // Pass orchestrated data to evaluation
+      );
+    }
     
     // Make sure we have the raw score and total possible score
     const rawScore = evaluationResult.overallGrade || 0;

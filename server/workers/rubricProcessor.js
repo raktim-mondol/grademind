@@ -1,9 +1,10 @@
 /**
  * Rubric Document Processor
- * Processes rubric documents using Gemini API
+ * Processes rubric documents using Landing AI for extraction and Gemini API for processing
  */
 const { rubricProcessingQueue } = require('../config/queue');
-const { processRubricPDF } = require('../utils/geminiService');
+const { processRubricPDF, processRubricContent } = require('../utils/geminiService');
+const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
 const { Assignment } = require('../models/assignment');
 const { updateAssignmentEvaluationReadiness, checkAndTriggerOrchestration } = require('../utils/assignmentUtils');
 const mongoose = require('mongoose');
@@ -11,13 +12,13 @@ const mongoose = require('mongoose');
 // Process rubrics from the queue
 rubricProcessingQueue.process(async (job) => {
   console.log(`Processing rubric job ${job.id}`);
-  
+
   const { assignmentId, pdfFilePath, totalPoints } = job.data;
-  
+
   if (!assignmentId || !pdfFilePath) {
     throw new Error('Missing required data for rubric processing');
   }
-  
+
   try {
     // Update processing status to in-progress
     await Assignment.findByIdAndUpdate(assignmentId, {
@@ -28,20 +29,48 @@ rubricProcessingQueue.process(async (job) => {
     // Get the assignment to access its question structure if available
     const assignment = await Assignment.findById(assignmentId);
     const questionStructure = assignment?.questionStructure || null;
-    
+
     console.log(`Retrieved question structure for assignment ${assignmentId}: ${questionStructure ? 'Found' : 'Not found'}`);
 
-    // Process the rubric document PDF using Gemini API
-    const processedRubric = await processRubricPDF(pdfFilePath, totalPoints);
-    
-    // Update the assignment in the database with the processed rubric
-    await Assignment.findByIdAndUpdate(assignmentId, {
-      processedRubric,
-      rubricProcessingStatus: 'completed',
-      rubricProcessingCompletedAt: new Date(),
-      rubricExtractionSource: 'separate_file',
-      rubricExtractionNotes: 'Processed from separate rubric file'
-    });
+    let processedRubric;
+    let extractedRubric = null;
+
+    // Check if Landing AI is configured for two-stage processing
+    if (isLandingAIConfigured()) {
+      console.log(`🔄 Using two-stage processing for rubric of assignment ${assignmentId}`);
+
+      // Stage 1: Extract content via Landing AI
+      console.log(`📄 Stage 1: Extracting rubric PDF content via Landing AI...`);
+      extractedRubric = await extractWithRetry(pdfFilePath);
+
+      // Stage 2: Process extracted content via Gemini
+      console.log(`🤖 Stage 2: Processing rubric content via Gemini...`);
+      const formattedContent = formatExtractedContent(extractedRubric);
+      processedRubric = await processRubricContent(formattedContent, totalPoints);
+
+      // Update with extracted content
+      await Assignment.findByIdAndUpdate(assignmentId, {
+        extractedRubric,
+        processedRubric,
+        rubricProcessingStatus: 'completed',
+        rubricProcessingCompletedAt: new Date(),
+        rubricExtractionSource: 'separate_file',
+        rubricExtractionNotes: 'Processed from separate rubric file using Landing AI extraction'
+      });
+    } else {
+      // Fallback: Direct PDF processing via Gemini
+      console.log(`🔄 Using direct PDF processing for rubric (Landing AI not configured)`);
+      processedRubric = await processRubricPDF(pdfFilePath, totalPoints);
+
+      // Update the assignment in the database with the processed rubric
+      await Assignment.findByIdAndUpdate(assignmentId, {
+        processedRubric,
+        rubricProcessingStatus: 'completed',
+        rubricProcessingCompletedAt: new Date(),
+        rubricExtractionSource: 'separate_file',
+        rubricExtractionNotes: 'Processed from separate rubric file'
+      });
+    }
     
     // Check if the assignment is now ready for evaluation
     const readyStatus = await updateAssignmentEvaluationReadiness(assignmentId);

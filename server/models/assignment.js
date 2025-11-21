@@ -101,6 +101,10 @@ const assignmentSchema = new mongoose.Schema({
   rubricProcessingCompletedAt: Date,
   solutionProcessingStartedAt: Date,
   solutionProcessingCompletedAt: Date,
+  // Extracted content from Landing AI
+  extractedContent: mongoose.Schema.Types.Mixed,
+  extractedRubric: mongoose.Schema.Types.Mixed,
+  extractedSolution: mongoose.Schema.Types.Mixed,
   // Processed data from Gemini API
   processedData: mongoose.Schema.Types.Mixed,
   processedRubric: mongoose.Schema.Types.Mixed,
