@@ -14,8 +14,46 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
   const [editingSectionId, setEditingSectionId] = useState(null);
   const [tempSectionName, setTempSectionName] = useState('');
 
+  // Processing status state
+  const [processingStatus, setProcessingStatus] = useState(null);
+  const [showProcessedData, setShowProcessedData] = useState(false);
+
   const fileInputRef = useRef(null);
   const activeSection = assignment.sections.find(s => s.id === activeSectionId);
+
+  // Poll for assignment processing status
+  useEffect(() => {
+    if (!assignment.backendId) return;
+
+    const pollStatus = async () => {
+      try {
+        const token = await window.Clerk?.session?.getToken();
+        const response = await api.get(`/assignments/${assignment.backendId}/status`, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+        setProcessingStatus(response.data);
+      } catch (error) {
+        console.error('Error polling status:', error);
+      }
+    };
+
+    // Initial poll
+    pollStatus();
+
+    // Continue polling if not complete
+    const interval = setInterval(() => {
+      if (processingStatus?.evaluationReadyStatus !== 'ready' &&
+          processingStatus?.evaluationReadyStatus !== 'partial') {
+        pollStatus();
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [assignment.backendId, processingStatus?.evaluationReadyStatus]);
+
+  // Check if processing is complete
+  const isProcessingComplete = processingStatus?.evaluationReadyStatus === 'ready' ||
+                               processingStatus?.evaluationReadyStatus === 'partial';
 
   useEffect(() => {
     if (assignment.sections.length === 0) {
@@ -368,7 +406,18 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
           </div>
 
           <div className="flex items-center gap-3">
-            {activeSection?.students.length === 0 ? (
+            {/* View Processed Data button */}
+            {isProcessingComplete && (
+              <button
+                onClick={() => setShowProcessedData(!showProcessedData)}
+                className="flex items-center gap-2 bg-white border border-zinc-200 text-zinc-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-zinc-50 transition-all"
+              >
+                <FileText className="w-4 h-4" />
+                {showProcessedData ? 'Hide Data' : 'View Data'}
+              </button>
+            )}
+
+            {isProcessingComplete && activeSection?.students.length === 0 ? (
               <label className="cursor-pointer flex items-center gap-2 bg-zinc-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-zinc-800 transition-all shadow-sm hover:shadow hover:-translate-y-0.5">
                 <Upload className="w-4 h-4" />
                 Upload Students
@@ -381,7 +430,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                   onChange={handleFileUpload}
                 />
               </label>
-            ) : (
+            ) : isProcessingComplete && activeSection?.students.length > 0 ? (
               <>
                 <label className="cursor-pointer flex items-center gap-2 bg-white border border-zinc-200 text-zinc-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-zinc-50 transition-all">
                   <Upload className="w-4 h-4" />
@@ -405,23 +454,148 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                   </button>
                 )}
               </>
-            )}
+            ) : !isProcessingComplete ? (
+              <span className="text-sm text-zinc-400 font-medium">Processing...</span>
+            ) : null}
           </div>
         </header>
 
         <div className="flex-1 overflow-hidden p-8">
-          {!activeSection?.students.length ? (
+          {/* Show processing status if not complete */}
+          {!isProcessingComplete && processingStatus && (
+            <div className="h-full flex flex-col">
+              <div className="bg-white rounded-xl border border-zinc-200 p-8 shadow-sm mb-6">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="bg-zinc-900 p-2 rounded-lg">
+                    <Loader2 className="w-5 h-5 text-white animate-spin" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg text-zinc-900">Processing Assignment</h3>
+                    <p className="text-sm text-zinc-500">Please wait while we analyze your documents...</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-5 h-5 text-zinc-400" />
+                      <span className="font-medium">Assignment PDF</span>
+                    </div>
+                    <span className={`text-sm font-mono px-2 py-1 rounded ${
+                      processingStatus.assignmentProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
+                      processingStatus.assignmentProcessingStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
+                      processingStatus.assignmentProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                      'bg-zinc-100 text-zinc-500'
+                    }`}>
+                      {processingStatus.assignmentProcessingStatus}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-5 h-5 text-zinc-400" />
+                      <span className="font-medium">Rubric</span>
+                    </div>
+                    <span className={`text-sm font-mono px-2 py-1 rounded ${
+                      processingStatus.rubricProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
+                      processingStatus.rubricProcessingStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
+                      processingStatus.rubricProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                      processingStatus.rubricProcessingStatus === 'not_applicable' ? 'bg-zinc-100 text-zinc-400' :
+                      'bg-zinc-100 text-zinc-500'
+                    }`}>
+                      {processingStatus.rubricProcessingStatus}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-5 h-5 text-zinc-400" />
+                      <span className="font-medium">Solution</span>
+                    </div>
+                    <span className={`text-sm font-mono px-2 py-1 rounded ${
+                      processingStatus.solutionProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
+                      processingStatus.solutionProcessingStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
+                      processingStatus.solutionProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                      processingStatus.solutionProcessingStatus === 'not_applicable' ? 'bg-zinc-100 text-zinc-400' :
+                      'bg-zinc-100 text-zinc-500'
+                    }`}>
+                      {processingStatus.solutionProcessingStatus}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Show processed data viewer when complete */}
+          {isProcessingComplete && showProcessedData && (
+            <div className="h-full flex flex-col">
+              <div className="bg-white rounded-xl border border-zinc-200 shadow-sm flex-1 overflow-hidden">
+                <div className="p-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/30">
+                  <h3 className="font-semibold text-sm text-zinc-900">Processed Data Structure</h3>
+                  <button
+                    onClick={() => setShowProcessedData(false)}
+                    className="text-xs text-zinc-500 hover:text-zinc-900"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="p-6 overflow-y-auto h-full">
+                  <div className="space-y-6">
+                    {processingStatus?.processedData && (
+                      <div>
+                        <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Assignment Structure</h4>
+                        <pre className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-xs font-mono text-zinc-700 overflow-x-auto max-h-64">
+                          {JSON.stringify(processingStatus.processedData, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
+                    {processingStatus?.processedRubric && (
+                      <div>
+                        <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Rubric Criteria</h4>
+                        <pre className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-xs font-mono text-zinc-700 overflow-x-auto max-h-64">
+                          {JSON.stringify(processingStatus.processedRubric, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
+                    {processingStatus?.processedSolution && (
+                      <div>
+                        <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Solution Key</h4>
+                        <pre className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-xs font-mono text-zinc-700 overflow-x-auto max-h-64">
+                          {JSON.stringify(processingStatus.processedSolution, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Show student upload section only when processing is complete and not viewing processed data */}
+          {isProcessingComplete && !showProcessedData && !activeSection?.students.length ? (
             <div className="h-full flex flex-col items-center justify-center text-zinc-400 border-2 border-dashed border-zinc-100 rounded-2xl">
               <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center mb-4">
-                <Users className="w-8 h-8 text-zinc-300" />
+                <CheckCircle className="w-8 h-8 text-green-500" />
               </div>
-              <p className="text-lg font-medium text-zinc-900">Section is empty</p>
-              <p className="text-sm max-w-sm text-center mt-2 mb-6">Upload student files (TXT, PDF) to populate this section.</p>
-              <label className="cursor-pointer flex items-center gap-2 text-zinc-900 font-medium hover:underline">
-                Upload Files <input type="file" ref={fileInputRef} className="hidden" multiple accept=".txt,.pdf,.md" onChange={handleFileUpload} />
-              </label>
+              <p className="text-lg font-medium text-zinc-900">Assignment Ready</p>
+              <p className="text-sm max-w-sm text-center mt-2 mb-4">Processing complete. You can now upload student submissions.</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowProcessedData(true)}
+                  className="flex items-center gap-2 text-zinc-600 border border-zinc-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-zinc-50"
+                >
+                  <FileText className="w-4 h-4" /> View Processed Data
+                </button>
+                <label className="cursor-pointer flex items-center gap-2 bg-zinc-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-zinc-800">
+                  <Upload className="w-4 h-4" /> Upload Students
+                  <input type="file" ref={fileInputRef} className="hidden" multiple accept=".txt,.pdf,.md" onChange={handleFileUpload} />
+                </label>
+              </div>
             </div>
-          ) : (
+          ) : isProcessingComplete && !showProcessedData && activeSection?.students.length > 0 ? (
             <div className="flex gap-8 h-full">
               <div className="flex-1 bg-white rounded-xl border border-zinc-200 overflow-hidden flex flex-col shadow-sm">
                 <div className="p-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/30">
@@ -598,7 +772,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                 )}
               </div>
             </div>
-          )}
+          ) : null}
         </div>
       </main>
     </div>
