@@ -2,419 +2,643 @@
 
 **Date**: 2025-11-21
 **Branch**: `claude/plan-gemini-api-integration-019i8qR4fHBcrtQs7Rw5Lwfe`
+**Updated**: Added Landing AI API for PDF extraction
 
 ---
 
 ## Executive Summary
 
-This document outlines the implementation plan for enhancing the Gemini API integration in EduGrade, leveraging `gemini-2.5-pro` capabilities for direct PDF processing.
+This document outlines the implementation plan for a **two-stage processing pipeline**:
+1. **Landing AI API** - Extract content from PDFs
+2. **Gemini 2.5 Pro** - Process/evaluate extracted content
 
 ---
 
-## 1. Current State
+## 1. New Architecture
 
-### Existing Implementation
+### Processing Flow
 
-**File**: `server/utils/geminiService.js`
-
-| Feature | Status |
-|---------|--------|
-| Direct PDF Processing | ✅ Working |
-| Rate Limiting (12s/5 RPM) | ✅ Working |
-| Request Queue (FIFO) | ✅ Working |
-| Retry with Backoff | ✅ Working |
-| JSON Response Mode | ✅ Working |
-
-### API Call Configuration
-
-```javascript
-generationConfig: {
-  temperature: 0.1,          // For extraction tasks
-  maxOutputTokens: 65536,
-  responseMimeType: "application/json"
-}
+```
+┌─────────────┐     ┌───────────────┐     ┌─────────────┐     ┌──────────┐
+│  PDF Upload │────▶│ Landing AI API│────▶│ Gemini API  │────▶│  Result  │
+│             │     │ (Extract)     │     │ (Process)   │     │          │
+└─────────────┘     └───────────────┘     └─────────────┘     └──────────┘
 ```
 
-### PDF Processing Pattern
+### Assignment Creation Flow
+
+```
+1. User uploads Assignment PDF → Landing AI extracts content
+2. User uploads Rubric PDF → Landing AI extracts content
+3. User uploads Solution PDF → Landing AI extracts content
+4. All extracted content → Gemini 2.5 Pro → Assignment structure created
+5. Store assignment info in database
+```
+
+### Student Evaluation Flow
+
+```
+1. Student uploads Submission PDF → Landing AI extracts content
+2. Extracted submission + Stored assignment info → Gemini 2.5 Pro
+3. Evaluation result stored
+4. Repeat for each student
+```
+
+---
+
+## 2. Landing AI API Integration
+
+### New Service File
+
+**File**: `server/utils/landingAIService.js`
 
 ```javascript
-const contents = [
-  {
-    parts: [
-      { text: prompt },
-      {
-        inlineData: {
-          mimeType: 'application/pdf',
-          data: base64Data
-        }
-      }
-    ]
+const axios = require('axios');
+const FormData = require('form-data');
+const fs = require('fs');
+
+const LANDING_AI_API_URL = 'https://api.va.landing.ai/v1/ade/parse';
+const LANDING_AI_API_KEY = process.env.LANDING_AI_API_KEY;
+
+/**
+ * Extract content from PDF using Landing AI API
+ * @param {string} pdfPath - Path to PDF file
+ * @returns {Object} Extracted content with text, tables, images
+ */
+async function extractPDFContent(pdfPath) {
+  const form = new FormData();
+  form.append('document', fs.createReadStream(pdfPath));
+  form.append('model', 'dpt-2-latest');
+
+  try {
+    const response = await axios.post(LANDING_AI_API_URL, form, {
+      headers: {
+        'Authorization': `Bearer ${LANDING_AI_API_KEY}`,
+        ...form.getHeaders()
+      },
+      timeout: 60000 // 60 second timeout
+    });
+
+    console.log('✅ Landing AI extraction completed for:', pdfPath);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Landing AI extraction failed:', error.message);
+    throw new Error(`PDF extraction failed: ${error.message}`);
   }
-];
+}
+
+/**
+ * Extract content with retry logic
+ */
+async function extractWithRetry(pdfPath, maxRetries = 3) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await extractPDFContent(pdfPath);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries) {
+        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff
+        console.log(`Retry ${attempt}/${maxRetries} after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+module.exports = {
+  extractPDFContent,
+  extractWithRetry
+};
+```
+
+### Environment Variables
+
+```env
+# Add to server/.env
+LANDING_AI_API_KEY=your_landing_ai_api_key
 ```
 
 ---
 
-## 2. Worker-Specific API Calls
+## 3. Updated Processing Pipeline
 
-### 2.1 Assignment Processing
+### 3.1 Assignment Processing
 
 **File**: `server/workers/assignmentProcessor.js`
 
-| Function | Purpose | Output |
-|----------|---------|--------|
-| `processAssignmentPDF()` | Extract structure | Questions, requirements |
-| `extractRubricFromAssignmentPDF()` | Extract embedded rubric | Grading criteria |
+```javascript
+const { extractWithRetry } = require('../utils/landingAIService');
+const { processAssignmentContent } = require('../utils/geminiService');
 
-### 2.2 Rubric Processing
+async function processAssignment(job) {
+  const { assignmentId } = job.data;
+  const assignment = await Assignment.findById(assignmentId);
+
+  try {
+    // Step 1: Extract PDF content via Landing AI
+    console.log('🔄 Extracting assignment PDF via Landing AI...');
+    const extractedContent = await extractWithRetry(assignment.assignmentFile);
+
+    // Step 2: Process extracted content via Gemini
+    console.log('🔄 Processing content via Gemini...');
+    const processedData = await processAssignmentContent(extractedContent);
+
+    // Step 3: Store results
+    assignment.extractedContent = extractedContent;
+    assignment.processedData = processedData;
+    assignment.processingStatus = 'completed';
+    await assignment.save();
+
+    console.log('✅ Assignment processing completed');
+  } catch (error) {
+    assignment.processingStatus = 'failed';
+    assignment.error = error.message;
+    await assignment.save();
+  }
+}
+```
+
+### 3.2 Rubric Processing
 
 **File**: `server/workers/rubricProcessor.js`
 
-| Function | Purpose | Output |
-|----------|---------|--------|
-| `processRubricPDF()` | Extract criteria | Weights, marking scales |
+```javascript
+async function processRubric(job) {
+  const { assignmentId } = job.data;
+  const assignment = await Assignment.findById(assignmentId);
 
-### 2.3 Solution Processing
+  // Step 1: Extract via Landing AI
+  const extractedRubric = await extractWithRetry(assignment.rubricFile);
+
+  // Step 2: Process via Gemini
+  const processedRubric = await processRubricContent(extractedRubric);
+
+  // Step 3: Store
+  assignment.extractedRubric = extractedRubric;
+  assignment.processedRubric = processedRubric;
+  assignment.rubricProcessingStatus = 'completed';
+  await assignment.save();
+}
+```
+
+### 3.3 Solution Processing
 
 **File**: `server/workers/solutionProcessor.js`
 
-| Function | Purpose | Output |
-|----------|---------|--------|
-| `processSolutionPDF()` | Extract model solution | Steps, expected outputs |
+```javascript
+async function processSolution(job) {
+  const { assignmentId } = job.data;
+  const assignment = await Assignment.findById(assignmentId);
 
-### 2.4 Evaluation Processing
+  // Step 1: Extract via Landing AI
+  const extractedSolution = await extractWithRetry(assignment.solutionFile);
+
+  // Step 2: Process via Gemini
+  const processedSolution = await processSolutionContent(extractedSolution);
+
+  // Step 3: Store
+  assignment.extractedSolution = extractedSolution;
+  assignment.processedSolution = processedSolution;
+  assignment.solutionProcessingStatus = 'completed';
+  await assignment.save();
+}
+```
+
+### 3.4 Submission Evaluation
 
 **File**: `server/workers/evaluationProcessor.js`
 
-| Function | Purpose | Output |
-|----------|---------|--------|
-| `evaluateSubmission()` | Grade submission | Scores, feedback, suggestions |
+```javascript
+async function evaluateSubmission(job) {
+  const { submissionId } = job.data;
+  const submission = await Submission.findById(submissionId);
+  const assignment = await Assignment.findById(submission.assignmentId);
 
-**Configuration**: `temperature: 0.2` (slightly higher for feedback variety)
+  // Step 1: Extract student submission via Landing AI
+  console.log('🔄 Extracting student submission...');
+  const extractedSubmission = await extractWithRetry(submission.submissionFile);
 
-### 2.5 Orchestration Processing
+  // Step 2: Prepare context (assignment info already stored)
+  const evaluationContext = {
+    assignmentContent: assignment.processedData,
+    rubricContent: assignment.processedRubric,
+    solutionContent: assignment.processedSolution,
+    studentSubmission: extractedSubmission
+  };
 
-**File**: `server/workers/orchestrationProcessor.js`
+  // Step 3: Evaluate via Gemini
+  console.log('🔄 Evaluating submission via Gemini...');
+  const evaluationResult = await evaluateWithGemini(evaluationContext);
 
-| Function | Purpose | Output |
-|----------|---------|--------|
-| `orchestrateAssignmentData()` | Validate consistency | Issues, recommendations |
+  // Step 4: Store results
+  submission.extractedContent = extractedSubmission;
+  submission.evaluationResult = evaluationResult;
+  submission.evaluationStatus = 'completed';
+  submission.overallGrade = evaluationResult.overallGrade;
+  await submission.save();
+
+  console.log('✅ Evaluation completed for student:', submission.studentName);
+}
+```
 
 ---
 
-## 3. Implementation Phases
-
-### Phase 1: Stability Improvements (High Priority)
-
-#### 1.1 Response Validation Enhancement
+## 4. Updated Gemini Service
 
 **File**: `server/utils/geminiService.js`
 
-```javascript
-// Add comprehensive validation
-const evaluationSchema = {
-  overallGrade: { type: 'number', required: true },
-  criteriaGrades: { type: 'array', required: true, minLength: 1 },
-  strengths: { type: 'array', required: true, minLength: 3 },
-  areasForImprovement: { type: 'array', required: true, minLength: 2 }
-};
+### New Functions (Text-based instead of PDF)
 
-function validateResponse(response, schema) {
-  const errors = [];
-  // Validate all fields...
-  return { valid: errors.length === 0, errors };
+```javascript
+/**
+ * Process assignment content (from Landing AI extraction)
+ */
+async function processAssignmentContent(extractedContent) {
+  const prompt = `
+    Analyze this extracted assignment content and provide structured output:
+
+    ${JSON.stringify(extractedContent)}
+
+    Return JSON with:
+    - title
+    - description
+    - questions (array with number, text, requirements, constraints)
+    - total_points
+  `;
+
+  return await callGeminiAPI(prompt);
+}
+
+/**
+ * Process rubric content (from Landing AI extraction)
+ */
+async function processRubricContent(extractedContent) {
+  const prompt = `
+    Analyze this extracted rubric and provide structured grading criteria:
+
+    ${JSON.stringify(extractedContent)}
+
+    Return JSON with grading_criteria array containing:
+    - question_number
+    - criterionName
+    - weight
+    - description
+    - marking_scale
+  `;
+
+  return await callGeminiAPI(prompt);
+}
+
+/**
+ * Process solution content (from Landing AI extraction)
+ */
+async function processSolutionContent(extractedContent) {
+  const prompt = `
+    Analyze this extracted model solution:
+
+    ${JSON.stringify(extractedContent)}
+
+    Return JSON with questions array containing:
+    - questionNumber
+    - solution
+    - expectedOutput
+    - keySteps
+  `;
+
+  return await callGeminiAPI(prompt);
+}
+
+/**
+ * Evaluate student submission against assignment
+ */
+async function evaluateWithGemini(context) {
+  const prompt = `
+    Evaluate this student submission against the assignment criteria.
+
+    ASSIGNMENT:
+    ${JSON.stringify(context.assignmentContent)}
+
+    RUBRIC:
+    ${JSON.stringify(context.rubricContent)}
+
+    MODEL SOLUTION:
+    ${JSON.stringify(context.solutionContent)}
+
+    STUDENT SUBMISSION:
+    ${JSON.stringify(context.studentSubmission)}
+
+    Provide detailed evaluation with:
+    - overallGrade (number)
+    - totalPossible (number)
+    - criteriaGrades (array with scores and feedback)
+    - questionScores (array with subsections)
+    - strengths (array, min 3)
+    - areasForImprovement (array, min 2)
+    - suggestions (array, min 2)
+  `;
+
+  return await callGeminiAPI(prompt);
+}
+
+/**
+ * Call Gemini API with text prompt (no PDF)
+ */
+async function callGeminiAPI(prompt) {
+  await enforceRateLimit();
+
+  const result = await model.generateContent({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 65536,
+      responseMimeType: "application/json"
+    }
+  });
+
+  const responseText = result.response.text();
+  return JSON.parse(cleanJsonResponse(responseText));
 }
 ```
 
-#### 1.2 Question Coverage Enforcement
+---
 
-**File**: `server/workers/evaluationProcessor.js`
+## 5. Database Schema Updates
 
-- Convert warning to error when questions are missing
-- Auto-retry with explicit instruction to cover missing questions
+### Assignment Model
 
-#### 1.3 Score Consistency Check
-
-```javascript
-// Ensure sum matches total
-const scoreSum = criteriaGrades.reduce((sum, cg) => sum + cg.score, 0);
-if (Math.abs(scoreSum - overallGrade) > 0.01) {
-  // Retry with correction instruction
-}
-```
-
-### Phase 2: Performance Optimization (Medium Priority)
-
-#### 2.1 Token Usage Tracking
-
-**File**: `server/utils/geminiService.js`
+**File**: `server/models/assignment.js`
 
 ```javascript
-// Track usage per request
-const usageStats = {
-  inputTokens: 0,
-  outputTokens: 0,
-  requestCount: 0
-};
+// Add new fields for extracted content
+const assignmentSchema = new mongoose.Schema({
+  // Existing fields...
 
-async function callGeminiAPI(prompt, pdfPath) {
-  const response = await model.generateContent(...);
-  usageStats.inputTokens += response.usageMetadata.promptTokenCount;
-  usageStats.outputTokens += response.usageMetadata.candidatesTokenCount;
-  return response;
-}
-```
+  // New: Raw extracted content from Landing AI
+  extractedContent: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  extractedRubric: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  extractedSolution: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
 
-#### 2.2 Caching Layer
-
-```javascript
-// Cache processed documents
-const documentCache = new Map();
-
-async function getProcessedAssignment(assignmentId) {
-  if (documentCache.has(assignmentId)) {
-    return documentCache.get(assignmentId);
-  }
-  const result = await processAssignmentPDF(pdfPath);
-  documentCache.set(assignmentId, result);
-  return result;
-}
-```
-
-#### 2.3 Priority Queue
-
-**File**: `server/config/memoryQueue.js`
-
-```javascript
-const priorityQueue = {
-  high: [],   // Evaluations
-  medium: [], // Document processing
-  low: []     // Orchestration
-};
-
-function addToQueue(job, priority = 'medium') {
-  priorityQueue[priority].push(job);
-  processNextJob();
-}
-```
-
-### Phase 3: Scalability (Lower Priority)
-
-#### 3.1 Batch Evaluation Mode
-
-- Process multiple submissions in a single API call
-- Share assignment context across batch
-
-#### 3.2 WebSocket Progress Updates
-
-**New File**: `server/websocket/progressHandler.js`
-
-```javascript
-// Real-time progress to frontend
-io.emit('evaluation-progress', {
-  submissionId,
-  status: 'processing',
-  progress: 50
+  // Existing: Processed data from Gemini
+  processedData: mongoose.Schema.Types.Mixed,
+  processedRubric: mongoose.Schema.Types.Mixed,
+  processedSolution: mongoose.Schema.Types.Mixed,
 });
 ```
 
-#### 3.3 Multi-Model Fallback
+### Submission Model
+
+**File**: `server/models/submission.js`
 
 ```javascript
-const models = [
-  'gemini-2.5-pro',
-  'gemini-1.5-pro',
-  'gemini-1.5-flash'
-];
+// Add new field for extracted content
+const submissionSchema = new mongoose.Schema({
+  // Existing fields...
 
-async function callWithFallback(prompt, pdfPath) {
-  for (const modelName of models) {
-    try {
-      return await callGeminiAPI(prompt, pdfPath, modelName);
-    } catch (error) {
-      if (error.status === 429) continue; // Try next model
-      throw error;
-    }
-  }
-}
+  // New: Raw extracted content from Landing AI
+  extractedContent: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+
+  // Existing: Evaluation result from Gemini
+  evaluationResult: mongoose.Schema.Types.Mixed,
+});
 ```
 
 ---
 
-## 4. Rate Limiting Strategy
+## 6. Rate Limiting Strategy
 
-### Current Implementation
+### Two APIs to Manage
 
-```javascript
-const MIN_REQUEST_INTERVAL = 12000; // 12 seconds
-```
+| API | Rate Limit | Strategy |
+|-----|------------|----------|
+| Landing AI | Check docs | Queue with delay |
+| Gemini | 5 RPM | 12s interval |
 
-### Throughput Estimates
-
-| Scenario | Requests | Time |
-|----------|----------|------|
-| 1 Assignment (with rubric + solution) | 3 | 36 sec |
-| 1 Assignment + 10 Submissions | 13 | 2.6 min |
-| 1 Assignment + 30 Submissions | 33 | 6.6 min |
-| 10 Assignments + 100 Submissions each | 1,030 | 3.4 hrs |
-
-### Recommended: Sliding Window
+### Sequential Processing
 
 ```javascript
-const requestTimestamps = [];
-const WINDOW_SIZE = 60000;
-const MAX_REQUESTS = 5;
+// For each document:
+// 1. Landing AI call (extract)
+// 2. Wait for Landing AI rate limit
+// 3. Gemini call (process)
+// 4. Wait for Gemini rate limit (12s)
 
-async function enforceRateLimit() {
-  const now = Date.now();
-  // Remove old timestamps
-  while (requestTimestamps[0] < now - WINDOW_SIZE) {
-    requestTimestamps.shift();
-  }
-  // Wait if at limit
-  if (requestTimestamps.length >= MAX_REQUESTS) {
-    await sleep(requestTimestamps[0] + WINDOW_SIZE - now);
-  }
-  requestTimestamps.push(now);
-}
+const LANDING_AI_DELAY = 2000;  // 2 seconds between calls
+const GEMINI_DELAY = 12000;     // 12 seconds between calls
 ```
+
+### Throughput Estimates (Updated)
+
+| Scenario | API Calls | Est. Time |
+|----------|-----------|-----------|
+| 1 Assignment (3 PDFs) | 3 Landing + 3 Gemini | ~45 sec |
+| 1 Assignment + 10 Submissions | 13 Landing + 13 Gemini | ~4 min |
+| 1 Assignment + 30 Submissions | 33 Landing + 33 Gemini | ~10 min |
 
 ---
 
-## 5. Error Handling Improvements
+## 7. Implementation Phases
 
-### Error Categories
+### Phase 1: Core Integration (Week 1-2)
 
-```javascript
-const ErrorTypes = {
-  RATE_LIMIT: 429,
-  INVALID_RESPONSE: 'parse_error',
-  TRUNCATED: 'incomplete_json',
-  SAFETY_BLOCK: 'content_blocked',
-  TIMEOUT: 'timeout',
-  NETWORK: 'network_error'
-};
-```
+1. **Create `landingAIService.js`**
+   - PDF extraction function
+   - Retry logic
+   - Error handling
 
-### Graceful Degradation
+2. **Update workers to use two-stage processing**
+   - `assignmentProcessor.js`
+   - `rubricProcessor.js`
+   - `solutionProcessor.js`
+   - `evaluationProcessor.js`
 
-```javascript
-function getPartialResult(error, context) {
-  return {
-    overallGrade: null,
-    evaluationError: error.message,
-    requiresManualReview: true,
-    strengths: ["Automated evaluation failed"],
-    suggestions: ["Contact instructor for manual evaluation"]
-  };
-}
-```
+3. **Update `geminiService.js`**
+   - New text-based processing functions
+   - Remove PDF handling (use extracted content)
 
----
+4. **Update database schemas**
+   - Add `extractedContent` fields
 
-## 6. Frontend-Backend Connection
+### Phase 2: Optimization (Week 3-4)
 
-### Polling Pattern
+5. **Rate limiting for both APIs**
+   - Dual queue system
+   - Priority management
 
-```javascript
-// client/src/pages/AssignmentProcessingPage.js
-useEffect(() => {
-  const interval = setInterval(async () => {
-    const { data } = await axios.get(`/api/assignments/${id}/status`);
+6. **Caching extracted content**
+   - Avoid re-extraction for re-runs
 
-    const complete =
-      data.assignmentProcessingStatus === 'completed' &&
-      ['completed', 'not_applicable'].includes(data.rubricProcessingStatus) &&
-      ['completed', 'not_applicable'].includes(data.solutionProcessingStatus);
+7. **Error handling improvements**
+   - Categorize Landing AI vs Gemini errors
+   - Appropriate retry strategies
 
-    if (complete) clearInterval(interval);
-  }, 30000);
+### Phase 3: Monitoring (Week 5)
 
-  return () => clearInterval(interval);
-}, [id]);
-```
+8. **Usage tracking**
+   - Landing AI API calls
+   - Gemini token usage
 
-### API Endpoints Triggering Gemini
-
-| Endpoint | Gemini Calls |
-|----------|-------------|
-| POST `/api/assignments` | 2-3 |
-| POST `/api/assignments/:id/rerun-orchestration` | 1 |
-| POST `/api/submissions/single` | 1-2 |
-| POST `/api/submissions/:id/rerun` | 1 |
+9. **Progress reporting**
+   - Show extraction vs processing stages in UI
 
 ---
 
-## 7. Files to Modify
+## 8. Files to Create/Modify
 
-### Core Changes
-
-| File | Changes |
-|------|---------|
-| `server/utils/geminiService.js` | Validation, caching, token tracking |
-| `server/workers/evaluationProcessor.js` | Question coverage enforcement |
-| `server/config/memoryQueue.js` | Priority queue support |
-
-### New Files (Phase 3)
+### New Files
 
 | File | Purpose |
 |------|---------|
-| `server/websocket/progressHandler.js` | Real-time updates |
-| `server/utils/tokenTracker.js` | Usage monitoring |
+| `server/utils/landingAIService.js` | Landing AI integration |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `server/utils/geminiService.js` | Text-based processing (no PDF) |
+| `server/workers/assignmentProcessor.js` | Two-stage processing |
+| `server/workers/rubricProcessor.js` | Two-stage processing |
+| `server/workers/solutionProcessor.js` | Two-stage processing |
+| `server/workers/evaluationProcessor.js` | Two-stage processing |
+| `server/models/assignment.js` | Add extractedContent fields |
+| `server/models/submission.js` | Add extractedContent field |
 
 ---
 
-## 8. Testing Strategy
+## 9. Environment Configuration
+
+```env
+# server/.env
+
+# Existing
+MONGO_URI=mongodb://localhost:27017/edugrade
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.5-pro
+PORT=5000
+
+# New
+LANDING_AI_API_KEY=your_landing_ai_api_key
+LANDING_AI_MODEL=dpt-2-latest
+```
+
+---
+
+## 10. Benefits of Two-Stage Approach
+
+| Benefit | Description |
+|---------|-------------|
+| Better Extraction | Landing AI specialized for document parsing |
+| Structured Data | Clean text/tables passed to Gemini |
+| Reduced Tokens | No PDF encoding in Gemini context |
+| Separation of Concerns | Extraction vs Processing |
+| Debugging | Can inspect extracted content separately |
+| Reusability | Extracted content cached for re-evaluation |
+
+---
+
+## 11. Testing Strategy
 
 ### Unit Tests
 
-- Response validation with various malformed inputs
-- Rate limiter behavior under load
-- Cache hit/miss scenarios
+- Landing AI service mock responses
+- Gemini text processing validation
+- Error handling for both APIs
 
 ### Integration Tests
 
-- Full pipeline: Upload → Process → Evaluate
-- Retry behavior on API errors
-- Multi-model fallback
+```javascript
+// Test full pipeline
+describe('Two-Stage Processing', () => {
+  it('should extract and process assignment', async () => {
+    // 1. Upload PDF
+    // 2. Verify Landing AI extraction
+    // 3. Verify Gemini processing
+    // 4. Check stored results
+  });
 
-### Load Tests
-
-- Batch submission processing
-- Concurrent user uploads
-- Rate limit compliance verification
+  it('should evaluate submission with stored assignment', async () => {
+    // 1. Create assignment (store processed data)
+    // 2. Upload submission
+    // 3. Verify extraction
+    // 4. Verify evaluation uses stored assignment
+  });
+});
+```
 
 ---
 
-## 9. Success Metrics
+## 12. Error Handling
+
+### Landing AI Errors
+
+```javascript
+const LandingAIErrors = {
+  RATE_LIMIT: 'rate_limit_exceeded',
+  INVALID_PDF: 'invalid_document',
+  TIMEOUT: 'extraction_timeout',
+  AUTH: 'authentication_failed'
+};
+
+async function handleLandingAIError(error, pdfPath) {
+  if (error.response?.status === 429) {
+    // Wait and retry
+    await sleep(5000);
+    return extractWithRetry(pdfPath);
+  }
+  if (error.response?.status === 400) {
+    throw new Error('Invalid PDF format');
+  }
+  throw error;
+}
+```
+
+### Gemini Errors
+
+```javascript
+// Existing error handling applies
+// Now only handles text processing errors
+// No PDF-related errors
+```
+
+---
+
+## 13. Success Metrics
 
 | Metric | Target |
 |--------|--------|
-| Evaluation Success Rate | >95% |
-| Question Coverage | 100% |
+| Extraction Success Rate | >98% |
+| Processing Success Rate | >95% |
+| End-to-End Success | >93% |
+| Avg Extraction Time | <5s per PDF |
+| Avg Processing Time | <10s per document |
 | Avg Evaluation Time | <15s per submission |
-| API Error Recovery | >90% |
-| Score Consistency | 100% match |
 
 ---
 
-## 10. Timeline
+## 14. Timeline Summary
 
-| Phase | Duration | Deliverables |
-|-------|----------|--------------|
-| Phase 1 | 1-2 weeks | Stability improvements |
-| Phase 2 | 2-3 weeks | Performance optimization |
-| Phase 3 | 3-4 weeks | Scalability features |
-
----
-
-## Appendix: Gemini 2.5 Pro Capabilities
-
-- **1M Token Context**: Process large documents whole
-- **Direct PDF Processing**: No text extraction needed
-- **JSON Response Mode**: Structured output guaranteed
-- **Vision**: Analyze charts, diagrams, handwriting
-- **Extended Output**: Up to 65,536 tokens
+| Week | Deliverables |
+|------|--------------|
+| 1 | Landing AI service, schema updates |
+| 2 | Worker updates for two-stage processing |
+| 3 | Rate limiting, caching |
+| 4 | Error handling, monitoring |
+| 5 | Testing, documentation |
 
 ---
 
