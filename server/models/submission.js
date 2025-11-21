@@ -60,6 +60,8 @@ const submissionSchema = new mongoose.Schema({
   processingCompletedAt: Date,
   evaluationStartedAt: Date,
   evaluationCompletedAt: Date,
+  // Extracted content from Landing AI
+  extractedContent: mongoose.Schema.Types.Mixed,
   // Processed data from DeepSeek API
   processedData: mongoose.Schema.Types.Mixed,
   // Evaluation results from Gemini API

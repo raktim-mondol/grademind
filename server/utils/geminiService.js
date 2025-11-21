@@ -2442,6 +2442,324 @@ IMPORTANT: Your response must be ONLY valid JSON. Ensure all fields are present 
   }
 }
 
+/**
+ * Process assignment content extracted by Landing AI
+ * @param {Object|string} extractedContent - Content extracted from Landing AI
+ * @returns {Promise<Object>} - Processed assignment structure
+ */
+async function processAssignmentContent(extractedContent) {
+  const contentText = typeof extractedContent === 'string'
+    ? extractedContent
+    : JSON.stringify(extractedContent, null, 2);
+
+  const prompt = `You are an expert assignment analyzer. Analyze the following extracted assignment content and provide a comprehensive structured output.
+
+EXTRACTED CONTENT:
+${contentText}
+
+Analyze this content and return a JSON object with the following structure:
+{
+  "title": "Assignment title",
+  "description": "Brief description of the assignment",
+  "questions": [
+    {
+      "number": "1",
+      "question": "Full question text",
+      "requirements": ["requirement 1", "requirement 2"],
+      "constraints": ["constraint 1"],
+      "expected_output": "Description of expected output",
+      "points": 10
+    }
+  ],
+  "total_points": 100,
+  "has_marking_criteria": true/false,
+  "metadata": {
+    "course": "Course name if mentioned",
+    "deadline": "Deadline if mentioned",
+    "submission_format": "Expected format"
+  }
+}
+
+Important:
+- Extract ALL questions from the content
+- Identify question numbers/letters (1, 2, a, b, 1a, 1b, etc.)
+- Calculate or extract point values for each question
+- Identify any embedded rubric or marking criteria
+- Be thorough and accurate in extraction`;
+
+  try {
+    const response = await getGeminiResponse(prompt, true);
+    const result = JSON.parse(cleanJsonResponse(response));
+    console.log('✅ Assignment content processed via Gemini');
+    return result;
+  } catch (error) {
+    console.error('❌ Error processing assignment content:', error);
+    throw new Error(`Failed to process assignment content: ${error.message}`);
+  }
+}
+
+/**
+ * Process rubric content extracted by Landing AI
+ * @param {Object|string} extractedContent - Content extracted from Landing AI
+ * @param {number} providedTotalPoints - Total points if provided
+ * @returns {Promise<Object>} - Processed rubric structure
+ */
+async function processRubricContent(extractedContent, providedTotalPoints = null) {
+  const contentText = typeof extractedContent === 'string'
+    ? extractedContent
+    : JSON.stringify(extractedContent, null, 2);
+
+  const prompt = `You are an expert rubric analyzer. Analyze the following extracted rubric content and provide a comprehensive structured output.
+
+EXTRACTED CONTENT:
+${contentText}
+
+${providedTotalPoints ? `Total points provided: ${providedTotalPoints}` : ''}
+
+Analyze this content and return a JSON object with the following structure:
+{
+  "grading_criteria": [
+    {
+      "question_number": "1",
+      "criterionName": "Criterion name",
+      "weight": 10,
+      "description": "What this criterion measures",
+      "marking_scale": "Performance level descriptions",
+      "subcriteria": [
+        {
+          "name": "Subcriterion name",
+          "weight": 5,
+          "description": "Description"
+        }
+      ]
+    }
+  ],
+  "total_points": 100,
+  "grading_scale": {
+    "A": "90-100",
+    "B": "80-89",
+    "C": "70-79",
+    "D": "60-69",
+    "F": "0-59"
+  }
+}
+
+Important:
+- Extract ALL grading criteria
+- Map criteria to specific questions where possible
+- Include point values/weights for each criterion
+- Extract any performance level descriptions
+- Be thorough and accurate`;
+
+  try {
+    const response = await getGeminiResponse(prompt, true);
+    const result = JSON.parse(cleanJsonResponse(response));
+    console.log('✅ Rubric content processed via Gemini');
+    return result;
+  } catch (error) {
+    console.error('❌ Error processing rubric content:', error);
+    throw new Error(`Failed to process rubric content: ${error.message}`);
+  }
+}
+
+/**
+ * Process solution content extracted by Landing AI
+ * @param {Object|string} extractedContent - Content extracted from Landing AI
+ * @returns {Promise<Object>} - Processed solution structure
+ */
+async function processSolutionContent(extractedContent) {
+  const contentText = typeof extractedContent === 'string'
+    ? extractedContent
+    : JSON.stringify(extractedContent, null, 2);
+
+  const prompt = `You are an expert solution analyzer. Analyze the following extracted model solution content and provide a comprehensive structured output.
+
+EXTRACTED CONTENT:
+${contentText}
+
+Analyze this content and return a JSON object with the following structure:
+{
+  "questions": [
+    {
+      "questionNumber": "1",
+      "questionSummary": "Brief description of what the question asks",
+      "solution": "Complete solution text/code",
+      "expectedOutput": "Expected output or result",
+      "keySteps": ["Step 1", "Step 2", "Step 3"],
+      "keyPoints": ["Important concept 1", "Important concept 2"],
+      "dependencies": ["library1", "library2"],
+      "alternativeApproaches": ["Alternative approach description"]
+    }
+  ],
+  "generalNotes": "Any general notes about the solution",
+  "commonMistakes": ["Common mistake 1", "Common mistake 2"]
+}
+
+Important:
+- Extract solutions for ALL questions
+- Include complete code/text for each solution
+- Identify key steps and concepts
+- Note any dependencies or requirements
+- Be thorough and accurate`;
+
+  try {
+    const response = await getGeminiResponse(prompt, true);
+    const result = JSON.parse(cleanJsonResponse(response));
+    console.log('✅ Solution content processed via Gemini');
+    return result;
+  } catch (error) {
+    console.error('❌ Error processing solution content:', error);
+    throw new Error(`Failed to process solution content: ${error.message}`);
+  }
+}
+
+/**
+ * Evaluate student submission using extracted content
+ * @param {Object} assignmentContent - Processed assignment data
+ * @param {Object} rubricContent - Processed rubric data
+ * @param {Object} solutionContent - Processed solution data
+ * @param {Object|string} extractedSubmission - Extracted submission content from Landing AI
+ * @param {string} studentId - Student identifier
+ * @returns {Promise<Object>} - Evaluation results
+ */
+async function evaluateWithExtractedContent(assignmentContent, rubricContent, solutionContent, extractedSubmission, studentId) {
+  const submissionText = typeof extractedSubmission === 'string'
+    ? extractedSubmission
+    : JSON.stringify(extractedSubmission, null, 2);
+
+  // Build question structure for reference
+  const questionStructure = assignmentContent?.questions || assignmentContent?.questionStructure || [];
+  const totalPossible = calculateTotalPossibleScore(assignmentContent, rubricContent);
+
+  const prompt = `You are an expert academic grader. Evaluate the following student submission against the assignment criteria.
+
+=== ASSIGNMENT ===
+${JSON.stringify(assignmentContent, null, 2)}
+
+=== RUBRIC ===
+${JSON.stringify(rubricContent, null, 2)}
+
+=== MODEL SOLUTION ===
+${JSON.stringify(solutionContent, null, 2)}
+
+=== STUDENT SUBMISSION ===
+Student ID: ${studentId}
+${submissionText}
+
+=== GRADING INSTRUCTIONS ===
+Total possible points: ${totalPossible}
+
+Evaluate the submission and return a JSON object with this EXACT structure:
+{
+  "overallGrade": <number between 0 and ${totalPossible}>,
+  "totalPossible": ${totalPossible},
+  "criteriaGrades": [
+    {
+      "questionNumber": "1",
+      "criterionName": "Criterion name",
+      "score": <number>,
+      "maxScore": <number>,
+      "feedback": "Detailed feedback (minimum 50 words)"
+    }
+  ],
+  "questionScores": [
+    {
+      "questionNumber": "1",
+      "questionText": "Brief summary",
+      "maxScore": <number>,
+      "earnedScore": <number>,
+      "feedback": "Specific feedback",
+      "subsections": [
+        {
+          "subsectionNumber": "a",
+          "subsectionText": "Subsection description",
+          "maxScore": <number>,
+          "earnedScore": <number>,
+          "feedback": "Feedback for subsection"
+        }
+      ]
+    }
+  ],
+  "strengths": ["Strength 1", "Strength 2", "Strength 3"],
+  "areasForImprovement": ["Area 1", "Area 2"],
+  "suggestions": ["Suggestion 1", "Suggestion 2"]
+}
+
+CRITICAL REQUIREMENTS:
+1. Evaluate EVERY question from the assignment
+2. Provide detailed, constructive feedback (minimum 50 words per criterion)
+3. Ensure scores are consistent and sum correctly
+4. Be fair but rigorous
+5. Reference specific parts of the submission in feedback
+6. Compare against the model solution where appropriate`;
+
+  try {
+    const response = await getGeminiResponse(prompt, true);
+    const result = JSON.parse(cleanJsonResponse(response));
+
+    // Validate result
+    if (typeof result.overallGrade !== 'number' || !Array.isArray(result.criteriaGrades)) {
+      throw new Error('Invalid evaluation result structure');
+    }
+
+    console.log(`✅ Evaluation completed for student ${studentId}: ${result.overallGrade}/${totalPossible}`);
+    return result;
+  } catch (error) {
+    console.error('❌ Error evaluating submission:', error);
+    throw new Error(`Failed to evaluate submission: ${error.message}`);
+  }
+}
+
+/**
+ * Extract rubric from assignment content (when no separate rubric provided)
+ * @param {Object|string} extractedContent - Extracted assignment content from Landing AI
+ * @param {number} providedTotalPoints - Total points if provided
+ * @returns {Promise<Object>} - Extracted rubric
+ */
+async function extractRubricFromContent(extractedContent, providedTotalPoints = null) {
+  const contentText = typeof extractedContent === 'string'
+    ? extractedContent
+    : JSON.stringify(extractedContent, null, 2);
+
+  const prompt = `You are an expert at analyzing academic assignments. Extract grading criteria from the following assignment content.
+
+EXTRACTED CONTENT:
+${contentText}
+
+${providedTotalPoints ? `Total points: ${providedTotalPoints}` : ''}
+
+Even if there's no explicit rubric, create reasonable grading criteria based on:
+- Questions and their requirements
+- Expected outputs
+- Point allocations mentioned
+- Common academic standards
+
+Return a JSON object:
+{
+  "grading_criteria": [
+    {
+      "question_number": "1",
+      "criterionName": "Criterion name",
+      "weight": 10,
+      "description": "What to look for",
+      "marking_scale": "How to grade"
+    }
+  ],
+  "total_points": ${providedTotalPoints || 100},
+  "extraction_notes": "Notes about how criteria were derived"
+}`;
+
+  try {
+    const response = await getGeminiResponse(prompt, true);
+    const result = JSON.parse(cleanJsonResponse(response));
+    console.log('✅ Rubric extracted from assignment content');
+    return result;
+  } catch (error) {
+    console.error('❌ Error extracting rubric from content:', error);
+    throw new Error(`Failed to extract rubric: ${error.message}`);
+  }
+}
+
 module.exports = {
   evaluateSubmission,
   evaluateSubmissionWithText,
@@ -2459,5 +2777,11 @@ module.exports = {
   processSolutionPDF,
   extractRubricFromAssignmentPDF,
   // Orchestration function
-  orchestrateAssignmentData
+  orchestrateAssignmentData,
+  // New functions for Landing AI extracted content
+  processAssignmentContent,
+  processRubricContent,
+  processSolutionContent,
+  evaluateWithExtractedContent,
+  extractRubricFromContent
 };

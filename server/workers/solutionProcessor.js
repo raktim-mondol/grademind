@@ -1,9 +1,10 @@
 /**
  * Solution Document Processor
- * Processes solution documents using Gemini API
+ * Processes solution documents using Landing AI for extraction and Gemini API for processing
  */
 const { solutionProcessingQueue } = require('../config/queue');
-const { processSolutionPDF } = require('../utils/geminiService');
+const { processSolutionPDF, processSolutionContent } = require('../utils/geminiService');
+const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
 const { Assignment } = require('../models/assignment');
 const { updateAssignmentEvaluationReadiness, checkAndTriggerOrchestration } = require('../utils/assignmentUtils');
 const mongoose = require('mongoose');
@@ -11,13 +12,13 @@ const mongoose = require('mongoose');
 // Process solutions from the queue
 solutionProcessingQueue.process(async (job) => {
   console.log(`Processing solution job ${job.id}`);
-  
+
   const { assignmentId, pdfFilePath } = job.data;
-  
+
   if (!assignmentId || !pdfFilePath) {
     throw new Error('Missing required data for solution processing');
   }
-  
+
   try {
     // Update processing status to in-progress
     await Assignment.findByIdAndUpdate(assignmentId, {
@@ -25,15 +26,41 @@ solutionProcessingQueue.process(async (job) => {
       solutionProcessingStartedAt: new Date()
     });
 
-    // Process the solution document PDF using Gemini API
-    const processedSolution = await processSolutionPDF(pdfFilePath);
-    
-    // Update the assignment in the database with the processed solution
-    await Assignment.findByIdAndUpdate(assignmentId, {
-      processedSolution,
-      solutionProcessingStatus: 'completed',
-      solutionProcessingCompletedAt: new Date()
-    });
+    let processedSolution;
+    let extractedSolution = null;
+
+    // Check if Landing AI is configured for two-stage processing
+    if (isLandingAIConfigured()) {
+      console.log(`🔄 Using two-stage processing for solution of assignment ${assignmentId}`);
+
+      // Stage 1: Extract content via Landing AI
+      console.log(`📄 Stage 1: Extracting solution PDF content via Landing AI...`);
+      extractedSolution = await extractWithRetry(pdfFilePath);
+
+      // Stage 2: Process extracted content via Gemini
+      console.log(`🤖 Stage 2: Processing solution content via Gemini...`);
+      const formattedContent = formatExtractedContent(extractedSolution);
+      processedSolution = await processSolutionContent(formattedContent);
+
+      // Update with extracted content
+      await Assignment.findByIdAndUpdate(assignmentId, {
+        extractedSolution,
+        processedSolution,
+        solutionProcessingStatus: 'completed',
+        solutionProcessingCompletedAt: new Date()
+      });
+    } else {
+      // Fallback: Direct PDF processing via Gemini
+      console.log(`🔄 Using direct PDF processing for solution (Landing AI not configured)`);
+      processedSolution = await processSolutionPDF(pdfFilePath);
+
+      // Update the assignment in the database with the processed solution
+      await Assignment.findByIdAndUpdate(assignmentId, {
+        processedSolution,
+        solutionProcessingStatus: 'completed',
+        solutionProcessingCompletedAt: new Date()
+      });
+    }
     
     // Check if the assignment is now ready for evaluation
     const readyStatus = await updateAssignmentEvaluationReadiness(assignmentId);
