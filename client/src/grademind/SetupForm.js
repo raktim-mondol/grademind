@@ -7,6 +7,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
     title: '',
     totalScore: 100,
     description: '',
+    questions: '',
     rubric: '',
     solution: '',
     selectedModels: ['gemini-2.5-pro'],
@@ -61,7 +62,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
   };
 
   const handleNext = () => {
-    if (step < 5) setStep(step + 1);
+    if (step < 6) setStep(step + 1);
     else onComplete(config);
   };
 
@@ -72,9 +73,10 @@ const SetupForm = ({ onComplete, onCancel }) => {
 
   const isStepValid = () => {
     if (step === 1) return config.title.trim().length > 0 && config.totalScore > 0 && (config.description.trim().length > 0 || !!config.descriptionFile);
-    if (step === 2) return config.rubric.trim().length > 0 || !!config.rubricFile;
-    if (step === 3) return config.solution.trim().length > 0 || !!config.solutionFile;
-    if (step === 4) return config.selectedModels.length > 0;
+    if (step === 2) return config.questions.trim().length > 0 || !!config.questionsFile;
+    if (step === 3) return config.rubric.trim().length > 0 || !!config.rubricFile;
+    if (step === 4) return config.solution.trim().length > 0 || !!config.solutionFile;
+    if (step === 5) return config.selectedModels.length > 0;
     return true;
   };
 
@@ -140,10 +142,11 @@ const SetupForm = ({ onComplete, onCancel }) => {
           </div>
           <div className="hidden md:flex items-center space-x-2 text-sm font-mono">
             <span className={`px-3 py-1 rounded-full transition-colors ${step === 1 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>01 Details</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 2 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>02 Rubric</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 3 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>03 Solution</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 4 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>04 AI Config</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 5 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>05 Review</span>
+            <span className={`px-3 py-1 rounded-full transition-colors ${step === 2 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>02 Questions</span>
+            <span className={`px-3 py-1 rounded-full transition-colors ${step === 3 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>03 Rubric</span>
+            <span className={`px-3 py-1 rounded-full transition-colors ${step === 4 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>04 Solution</span>
+            <span className={`px-3 py-1 rounded-full transition-colors ${step === 5 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>05 AI Config</span>
+            <span className={`px-3 py-1 rounded-full transition-colors ${step === 6 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>06 Review</span>
           </div>
         </div>
 
@@ -197,6 +200,28 @@ const SetupForm = ({ onComplete, onCancel }) => {
           {step === 2 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
               <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Assignment Questions</label>
+                <p className="text-sm text-zinc-500">List the questions or tasks students need to complete.</p>
+                <textarea
+                  value={config.questions}
+                  onChange={(e) => handleChange('questions', e.target.value)}
+                  className="w-full h-64 bg-zinc-50 border border-zinc-200 rounded-lg p-6 text-sm font-mono text-zinc-800 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all resize-none placeholder:text-zinc-400"
+                  placeholder={`1. What is the main theme of The Great Gatsby?\n2. Analyze the symbolism of the green light.\n3. Compare and contrast the characters of Nick and Gatsby.`}
+                  autoFocus
+                />
+              </div>
+              <div className="relative flex items-center py-2">
+                <div className="flex-grow border-t border-zinc-100"></div>
+                <span className="flex-shrink-0 mx-4 text-xs text-zinc-400 font-mono uppercase">OR</span>
+                <div className="flex-grow border-t border-zinc-100"></div>
+              </div>
+              <FileUploader field="questionsFile" currentFile={config.questionsFile} label="Upload Questions" />
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+              <div className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Grading Rubric</label>
                 <p className="text-sm text-zinc-500">Define the criteria the AI should use to evaluate submissions.</p>
                 <textarea
@@ -216,7 +241,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
             </div>
           )}
 
-          {step === 3 && (
+          {step === 4 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
               <div className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Reference Solution / Key</label>
@@ -238,7 +263,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
             </div>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-right-8 duration-500">
               <div className="space-y-4">
                 <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Select AI Models</label>
@@ -298,7 +323,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
             </div>
           )}
 
-          {step === 5 && (
+          {step === 6 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-right-8 duration-500">
               <div className="bg-zinc-50 rounded-xl p-8 border border-zinc-200">
                 <div className="flex items-center gap-3 mb-6">
@@ -330,7 +355,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="p-4 bg-white border border-zinc-200 rounded-lg">
                       <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-2">
                         <FileText className="w-3 h-3" /> Description
@@ -342,6 +367,20 @@ const SetupForm = ({ onComplete, onCancel }) => {
                         </div>
                       ) : (
                         <div className="text-sm text-zinc-600 font-mono line-clamp-4">{config.description}</div>
+                      )}
+                    </div>
+
+                    <div className="p-4 bg-white border border-zinc-200 rounded-lg">
+                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                        <FileText className="w-3 h-3" /> Questions
+                      </h4>
+                      {config.questionsFile ? (
+                        <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+                          <Paperclip className="w-4 h-4 text-zinc-400" />
+                          <span className="truncate">{config.questionsFile.name}</span>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-zinc-600 font-mono line-clamp-4">{config.questions}</div>
                       )}
                     </div>
 
@@ -392,7 +431,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
                 : 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
             }`}
           >
-            {step === 4 ? 'Review Schema' : (step === 5 ? 'Create Workspace' : 'Continue')}
+            {step === 5 ? 'Review Schema' : (step === 6 ? 'Create Workspace' : 'Continue')}
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
