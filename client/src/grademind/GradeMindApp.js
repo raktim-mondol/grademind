@@ -158,7 +158,7 @@ function GradeMindApp() {
 
       // Add AI config as JSON in sections
       const sections = [{
-        selectedModels: config.selectedModels || ['gemini-2.5-flash'],
+        selectedModels: config.selectedModels || ['gemini-2.5-pro'],
         useAverageGrading: config.useAverageGrading || false
       }];
       formData.append('sections', JSON.stringify(sections));

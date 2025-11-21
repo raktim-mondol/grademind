@@ -9,7 +9,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
     description: '',
     rubric: '',
     solution: '',
-    selectedModels: ['gemini-2.5-flash'],
+    selectedModels: ['gemini-2.5-pro'],
     useAverageGrading: false
   });
 
@@ -47,7 +47,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
       let newModels;
       if (current.includes(modelId)) {
         newModels = current.filter(m => m !== modelId);
-        if (newModels.length === 0) newModels = ['gemini-2.5-flash'];
+        if (newModels.length === 0) newModels = ['gemini-2.5-pro'];
       } else {
         newModels = [...current, modelId];
       }
@@ -80,16 +80,16 @@ const SetupForm = ({ onComplete, onCancel }) => {
 
   const availableModels = [
     {
+      id: 'gemini-2.5-pro',
+      name: 'Gemini 2.5 Pro',
+      desc: 'Most capable model. Best for complex grading and detailed feedback.',
+      icon: <Sparkles className="w-4 h-4 text-purple-500" />
+    },
+    {
       id: 'gemini-2.5-flash',
       name: 'Gemini 2.5 Flash',
       desc: 'Fast, efficient, and balanced. Best for standard essays.',
       icon: <Zap className="w-4 h-4 text-yellow-500" />
-    },
-    {
-      id: 'gemini-3-pro-preview',
-      name: 'Gemini 3 Pro (Preview)',
-      desc: 'High reasoning capability. Best for complex STEM or logic.',
-      icon: <Sparkles className="w-4 h-4 text-purple-500" />
     },
     {
       id: 'gemini-flash-lite-latest',
