@@ -59,6 +59,33 @@ function GradeMindApp() {
     }
   }, [isLoaded, isSignedIn, view]);
 
+  // Handle hash changes for Clerk's internal navigation
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash === '#sign-in' || hash === '#/sign-in') {
+        setView(AppView.SIGN_IN);
+      } else if (hash === '#sign-up' || hash === '#/sign-up') {
+        setView(AppView.SIGN_UP);
+      } else if (hash === '#workspaces' || hash === '#/workspaces') {
+        if (isSignedIn) {
+          setView(AppView.WORKSPACES);
+        }
+      }
+      // Clear the hash after handling
+      if (hash) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    };
+
+    // Check initial hash
+    handleHashChange();
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [isSignedIn]);
+
   const handleStart = () => {
     setView(AppView.PRICING);
   };
@@ -164,18 +191,10 @@ function GradeMindApp() {
               elements: {
                 rootBox: 'mx-auto',
                 card: 'shadow-xl border border-zinc-100 rounded-2xl',
+                footerActionLink: 'text-zinc-900 hover:text-zinc-700 font-medium',
               }
             }}
           />
-          <div className="mt-4 text-sm text-zinc-500">
-            Don't have an account?{' '}
-            <button
-              onClick={() => setView(AppView.SIGN_UP)}
-              className="text-zinc-900 font-medium hover:underline"
-            >
-              Sign up
-            </button>
-          </div>
         </div>
       )}
 
@@ -197,18 +216,10 @@ function GradeMindApp() {
               elements: {
                 rootBox: 'mx-auto',
                 card: 'shadow-xl border border-zinc-100 rounded-2xl',
+                footerActionLink: 'text-zinc-900 hover:text-zinc-700 font-medium',
               }
             }}
           />
-          <div className="mt-4 text-sm text-zinc-500">
-            Already have an account?{' '}
-            <button
-              onClick={() => setView(AppView.SIGN_IN)}
-              className="text-zinc-900 font-medium hover:underline"
-            >
-              Sign in
-            </button>
-          </div>
         </div>
       )}
 
