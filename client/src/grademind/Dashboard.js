@@ -40,16 +40,27 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
     // Initial poll
     pollStatus();
 
-    // Continue polling if not complete
+    // Continue polling until all processing is truly complete
     const interval = setInterval(() => {
-      if (processingStatus?.evaluationReadyStatus !== 'ready' &&
-          processingStatus?.evaluationReadyStatus !== 'partial') {
+      // Check if all documents have finished processing (not just evaluationReadyStatus)
+      const assignmentDone = processingStatus?.assignmentProcessingStatus === 'completed' ||
+                             processingStatus?.assignmentProcessingStatus === 'failed';
+      const rubricDone = processingStatus?.rubricProcessingStatus === 'completed' ||
+                         processingStatus?.rubricProcessingStatus === 'failed' ||
+                         processingStatus?.rubricProcessingStatus === 'not_applicable';
+      const solutionDone = processingStatus?.solutionProcessingStatus === 'completed' ||
+                           processingStatus?.solutionProcessingStatus === 'failed' ||
+                           processingStatus?.solutionProcessingStatus === 'not_applicable';
+
+      const allProcessingComplete = assignmentDone && rubricDone && solutionDone;
+
+      if (!allProcessingComplete) {
         pollStatus();
       }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [assignment.backendId, processingStatus?.evaluationReadyStatus]);
+  }, [assignment.backendId, processingStatus?.assignmentProcessingStatus, processingStatus?.rubricProcessingStatus, processingStatus?.solutionProcessingStatus]);
 
   // Check if processing is complete
   const isProcessingComplete = processingStatus?.evaluationReadyStatus === 'ready' ||
