@@ -2654,67 +2654,174 @@ async function evaluateWithExtractedContent(assignmentContent, rubricContent, so
   console.log(`   Total possible score: ${totalPossible}`);
   console.log(`   Questions in structure: ${questionStructure.length}`);
 
-  const prompt = `You are an expert academic grader. Evaluate the following student submission against the assignment criteria.
+  // Calculate rubric criteria text
+  const rubricCriteria = rubricContent?.grading_criteria || [];
+  let questionRubricText = '';
+  let criteriaQuestionMappingText = '';
 
-=== ASSIGNMENT ===
-${JSON.stringify(assignmentContent, null, 2)}
+  if (rubricCriteria.length > 0) {
+    questionRubricText = 'Rubric Details per Question:\n';
+    criteriaQuestionMappingText = 'Criteria to Question Mapping:\n';
+    rubricCriteria.forEach(crit => {
+      const qNum = crit.question_number || 'General';
+      questionRubricText += `- Criterion: ${crit.criterionName || 'N/A'} (Max: ${crit.weight || 0} points)\n  Description: ${crit.description || 'N/A'}\n`;
+      if (crit.marking_scale) {
+        questionRubricText += `  Scale: ${crit.marking_scale}\n`;
+      }
+      criteriaQuestionMappingText += `- Criterion '${crit.criterionName || 'N/A'}' applies to Question(s): ${qNum}\n`;
+    });
+  }
 
-=== RUBRIC ===
-${JSON.stringify(rubricContent, null, 2)}
+  // Build question structure text
+  let questionStructureText = '';
+  if (questionStructure.length > 0) {
+    questionStructureText = 'Question Structure:\n';
+    questionStructure.forEach(q => {
+      questionStructureText += `- Q${q.number || '?'}: ${q.question || q.text || 'N/A'} (${q.points || 0} points)\n`;
+      if (q.subQuestions && q.subQuestions.length > 0) {
+        q.subQuestions.forEach(sq => {
+          questionStructureText += `  - ${sq.number || sq.label || '?'}: ${sq.question || sq.text || 'N/A'} (${sq.points || 0} points)\n`;
+        });
+      }
+    });
+  }
 
-=== MODEL SOLUTION ===
+  // Determine solution availability and format solution info
+  const solutionAvailable = solutionContent &&
+    Object.keys(solutionContent).length > 0 &&
+    !solutionContent.processing_error;
+
+  let solutionInfoText = '';
+  if (solutionAvailable) {
+    solutionInfoText = `
+MODEL SOLUTION (PROVIDED):
+The following model solution is available for reference. Use this to compare against the student's work and assess correctness and completeness.
+
 ${JSON.stringify(solutionContent, null, 2)}
 
+When evaluating:
+- Compare the student's answers against the model solution
+- Note both correct approaches that match the solution and valid alternative approaches
+- Identify missing elements compared to the solution
+- Credit partial solutions appropriately`;
+  } else {
+    solutionInfoText = `
+MODEL SOLUTION (NOT PROVIDED):
+No model solution has been provided for this assignment. You must use your expert judgment to evaluate the submission based on:
+- The assignment requirements and question specifications
+- The grading rubric criteria (if provided)
+- Standard academic expectations for the subject matter
+- Logical correctness and completeness of the student's work
+- Code functionality and best practices (for programming tasks)
+
+IMPORTANT: When no solution is available, focus on:
+1. Whether the student addresses all parts of each question
+2. Logical soundness and correctness of the approach
+3. Completeness of explanations and implementations
+4. Code quality, documentation, and best practices
+5. Proper use of concepts relevant to the assignment topic`;
+  }
+
+  const prompt = `You are an expert academic grader evaluating student submissions. This submission has been extracted from a PDF using Landing AI's document processing API, and you are now performing the evaluation.
+
+=== SYSTEM CONTEXT ===
+- PDF Extraction: Completed via Landing AI API
+- Evaluation Engine: Google Gemini ${process.env.GEMINI_MODEL || 'gemini-2.5-pro'}
+- Total Possible Score: ${totalPossible} points
+
+=== ASSIGNMENT INFORMATION ===
+Title: ${assignmentContent?.title || 'Not specified'}
+Description: ${assignmentContent?.description || 'Not specified'}
+${questionStructureText || 'No specific question structure provided.'}
+
+=== GRADING RUBRIC ===
+${rubricCriteria.length > 0 ? `**GRADING RUBRIC PROVIDED** - This is your PRIMARY grading standard with ${rubricCriteria.length} criteria.
+
+${questionRubricText}
+${criteriaQuestionMappingText}
+
+IMPORTANT: Apply each rubric criterion strictly. Use the marking scales and point distributions exactly as specified.` : `**NO SEPARATE RUBRIC PROVIDED**
+Derive grading criteria from:
+1. Assignment instructions and question descriptions
+2. Expected learning outcomes
+3. Standard academic expectations for the subject
+4. Code quality standards (for programming tasks)`}
+
+${solutionInfoText}
+
 === STUDENT SUBMISSION ===
-Student ID: ${studentId}
+Student ID: ${studentId || 'Not provided'}
+
+--- BEGIN EXTRACTED SUBMISSION CONTENT ---
 ${submissionText}
+--- END EXTRACTED SUBMISSION CONTENT ---
 
-=== GRADING INSTRUCTIONS ===
-Total possible points: ${totalPossible}
+=== EVALUATION INSTRUCTIONS ===
 
-Evaluate the submission and return a JSON object with this EXACT structure:
+⚠️ **CRITICAL REQUIREMENT - READ THIS FIRST:**
+You MUST provide DETAILED SUBSECTION-LEVEL grading for EVERY SINGLE QUESTION in the criteriaGrades array.
+- If a question has subsections (e.g., 1a, 1b, 1c), create SEPARATE criteriaGrade entries for EACH subsection
+- If a question has NO subsections, create at least ONE criteriaGrade entry for that question
+- NEVER summarize multiple subsections into one entry
+- NEVER skip any questions
+
+GRADING APPROACH:
+1. Read the entire submission carefully, including all code, explanations, outputs, and visual elements
+2. ${rubricCriteria.length > 0 ? 'Apply each rubric criterion strictly to the relevant questions' : 'Evaluate based on assignment requirements and standard academic expectations'}
+3. ${solutionAvailable ? 'Compare against the model solution while accepting valid alternative approaches' : 'Use your expert judgment to assess correctness, completeness, and quality'}
+4. Provide constructive, specific feedback that helps the student improve
+5. Be fair but rigorous - award points proportionally based on quality of work
+
+SCORING RULES:
+- Total maximum score: ${totalPossible} points
+- Grade EXACTLY according to the provided question structure and point values
+- Do NOT convert scores to percentages - use raw scores
+- Ensure the sum of all criteriaGrades scores equals overallGrade
+
+OUTPUT REQUIREMENTS:
+Return a JSON object with this EXACT structure:
+
 {
   "overallGrade": <number between 0 and ${totalPossible}>,
   "totalPossible": ${totalPossible},
   "criteriaGrades": [
     {
       "questionNumber": "1",
-      "criterionName": "Criterion name",
+      "criterionName": "Descriptive criterion name",
       "score": <number>,
       "maxScore": <number>,
-      "feedback": "Detailed feedback (minimum 50 words)"
+      "feedback": "Detailed feedback explaining the score (minimum 50 words). ${solutionAvailable ? 'Reference the model solution where applicable.' : 'Explain your reasoning based on correctness, completeness, and quality.'}"
     }
   ],
   "questionScores": [
     {
       "questionNumber": "1",
-      "questionText": "Brief summary",
+      "questionText": "Brief summary of the question",
       "maxScore": <number>,
       "earnedScore": <number>,
-      "feedback": "Specific feedback",
+      "feedback": "Overall feedback for this question",
       "subsections": [
         {
           "subsectionNumber": "a",
           "subsectionText": "Subsection description",
           "maxScore": <number>,
           "earnedScore": <number>,
-          "feedback": "Feedback for subsection"
+          "feedback": "Feedback for this subsection"
         }
       ]
     }
   ],
   "strengths": ["Strength 1", "Strength 2", "Strength 3"],
   "areasForImprovement": ["Area 1", "Area 2"],
-  "suggestions": ["Suggestion 1", "Suggestion 2"]
+  "suggestions": ["Concrete suggestion 1", "Concrete suggestion 2"]
 }
 
-CRITICAL REQUIREMENTS:
-1. Evaluate EVERY question from the assignment
-2. Provide detailed, constructive feedback (minimum 50 words per criterion)
-3. Ensure scores are consistent and sum correctly
-4. Be fair but rigorous
-5. Reference specific parts of the submission in feedback
-6. Compare against the model solution where appropriate`;
+CRITICAL VALIDATION:
+1. Every question in the assignment MUST have at least one criteriaGrade entry
+2. Feedback must be substantive (minimum 50 words per criterion)
+3. Scores must sum correctly: sum(criteriaGrades.score) = overallGrade
+4. Reference specific parts of the submission in your feedback
+5. ${solutionAvailable ? 'Compare against model solution where appropriate' : 'Justify scores based on correctness, completeness, and quality standards'}`;
 
   try {
     console.log('🤖 [Gemini] Calling Gemini API for evaluation...');
