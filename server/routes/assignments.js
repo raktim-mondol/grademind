@@ -25,6 +25,8 @@ const storage = multer.diskStorage({
       uploadPath = path.join(__dirname, '..', 'uploads', 'solutions');
     } else if (file.fieldname === 'rubric') {
       uploadPath = path.join(__dirname, '..', 'uploads', 'rubrics');
+    } else if (file.fieldname === 'questions') {
+      uploadPath = path.join(__dirname, '..', 'uploads', 'questions');
     }
     
     // Create directory if it doesn't exist

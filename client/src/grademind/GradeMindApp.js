@@ -116,6 +116,7 @@ function GradeMindApp() {
       // Add basic fields
       formData.append('title', config.title);
       formData.append('totalPoints', config.totalScore || 100);
+      formData.append('description', config.description || '');
 
       // Helper to convert base64 to Blob
       const base64ToBlob = (base64Data, mimeType) => {
@@ -128,14 +129,10 @@ function GradeMindApp() {
         return new Blob([byteArray], { type: mimeType });
       };
 
-      // Handle description/assignment file
-      if (config.descriptionFile) {
-        const blob = base64ToBlob(config.descriptionFile.data, config.descriptionFile.mimeType);
-        formData.append('assignment', blob, config.descriptionFile.name);
-      } else if (config.description) {
-        // Create a text file from description
-        const blob = new Blob([config.description], { type: 'text/plain' });
-        formData.append('assignment', blob, 'assignment.txt');
+      // Handle assignment PDF file (required)
+      if (config.assignmentFile) {
+        const blob = base64ToBlob(config.assignmentFile.data, config.assignmentFile.mimeType);
+        formData.append('assignment', blob, config.assignmentFile.name);
       }
 
       // Handle rubric file

@@ -10,6 +10,7 @@ const {
 } = require('../config/queue');
 const { isConnected } = require('../config/db');
 const { getUserId, isAuthenticated, verifyOwnership } = require('../utils/authHelper');
+const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
 
 // Create a new assignment
 exports.createAssignment = async (req, res) => {
