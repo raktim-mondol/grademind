@@ -233,6 +233,26 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
 
           studentsToGrade[i].result = response.data;
           studentsToGrade[i].status = 'completed';
+
+          // Save result to database for CSV export
+          if (assignment.backendId) {
+            try {
+              const token = await window.Clerk?.session?.getToken();
+              await api.post('/grademind/save-result', {
+                assignmentId: assignment.backendId,
+                studentName: studentsToGrade[i].name,
+                studentId: studentsToGrade[i].name,
+                evaluationResult: response.data,
+                sectionName: activeSection.name
+              }, {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+              });
+              console.log(`✅ Saved result for ${studentsToGrade[i].name} to database`);
+            } catch (saveError) {
+              console.error('Error saving result to database:', saveError);
+              // Don't fail the evaluation if save fails
+            }
+          }
         } catch (error) {
           console.error('Evaluation error:', error);
           // Show error but mark as failed
