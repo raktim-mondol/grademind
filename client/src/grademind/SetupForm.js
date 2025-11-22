@@ -255,7 +255,7 @@ const SetupForm = ({ onComplete, onCancel }) => {
                   type="number"
                   value={config.totalScore}
                   onChange={(e) => handleChange('totalScore', parseInt(e.target.value) || 0)}
-                  className="w-full md:w-48 bg-white border border-zinc-200 rounded-lg p-4 text-xl font-medium focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all"
+                  className="w-32 bg-white border border-zinc-200 rounded-lg p-3 text-base font-medium focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all"
                   min="1"
                 />
               </div>
