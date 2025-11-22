@@ -173,12 +173,12 @@ const SetupForm = ({ onComplete, onCancel }) => {
             <h2 className="text-3xl font-bold tracking-tight mb-2">New Assignment</h2>
           </div>
           <div className="hidden md:flex items-center space-x-2 text-sm font-mono">
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 1 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>01 Details</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 2 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>02 Assignment</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 3 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>03 Rubric</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 4 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>04 Solution</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 5 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>05 AI Config</span>
-            <span className={`px-3 py-1 rounded-full transition-colors ${step === 6 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>06 Review</span>
+            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 1 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>01 Details</span>
+            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 2 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>02 Assignment</span>
+            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 3 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>03 Rubric</span>
+            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 4 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>04 Solution</span>
+            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 5 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>05 AI Config</span>
+            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 6 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>06 Review</span>
           </div>
         </div>
 
@@ -200,12 +200,11 @@ const SetupForm = ({ onComplete, onCancel }) => {
 
               <div className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Instructions / Context <span className="text-red-500">*</span></label>
-                <p className="text-sm text-zinc-500">Provide context or instructions for the AI grader about this assignment.</p>
                 <textarea
                   value={config.description}
                   onChange={(e) => handleChange('description', e.target.value)}
                   className="w-full h-48 bg-white border border-zinc-200 rounded-lg p-4 text-base focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all resize-none placeholder:text-zinc-300"
-                  placeholder="This is a midterm essay assignment for English Literature 101. Students should demonstrate understanding of symbolism and themes in The Great Gatsby..."
+                  placeholder="Provide context or instructions for the AI grader about this assignment."
                 />
               </div>
             </div>
