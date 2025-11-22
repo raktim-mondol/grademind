@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
+const { Submission } = require('../models/submission');
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -400,6 +401,97 @@ router.post('/evaluate', upload.single('file'), async (req, res) => {
     return handleGeminiResponse(res, result, config);
   } catch (error) {
     console.error('❌ GradeMind evaluation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Save grademind evaluation result as a Submission document
+router.post('/save-result', async (req, res) => {
+  try {
+    const { assignmentId, studentName, studentId, evaluationResult, sectionName } = req.body;
+
+    if (!assignmentId || !studentName || !evaluationResult) {
+      return res.status(400).json({
+        error: 'Missing required fields: assignmentId, studentName, evaluationResult'
+      });
+    }
+
+    // Build questionScores from lostMarks or create a single overall entry
+    let questionScores = [];
+    if (evaluationResult.lostMarks && evaluationResult.lostMarks.length > 0) {
+      // Create question entries from lost marks areas
+      questionScores = evaluationResult.lostMarks.map((item, idx) => ({
+        questionNumber: String(idx + 1),
+        earnedScore: Math.max(0, (evaluationResult.maxScore / evaluationResult.lostMarks.length) - item.pointsLost),
+        maxScore: evaluationResult.maxScore / evaluationResult.lostMarks.length,
+        feedback: `${item.area}: ${item.reason}`
+      }));
+    } else {
+      // Create a single question entry with the overall score
+      questionScores = [{
+        questionNumber: '1',
+        earnedScore: evaluationResult.score,
+        maxScore: evaluationResult.maxScore,
+        feedback: evaluationResult.feedback
+      }];
+    }
+
+    // Check if submission already exists for this student and assignment
+    const existingSubmission = await Submission.findOne({
+      assignmentId,
+      studentId: studentId || studentName
+    });
+
+    if (existingSubmission) {
+      // Update existing submission
+      existingSubmission.evaluationResult = {
+        overallGrade: evaluationResult.score,
+        totalPossible: evaluationResult.maxScore,
+        letterGrade: evaluationResult.letterGrade,
+        feedback: evaluationResult.feedback,
+        strengths: evaluationResult.strengths,
+        areasForImprovement: evaluationResult.weaknesses,
+        questionScores: questionScores
+      };
+      existingSubmission.overallGrade = evaluationResult.score;
+      existingSubmission.totalPossible = evaluationResult.maxScore;
+      existingSubmission.evaluationStatus = 'completed';
+      existingSubmission.processingStatus = 'completed';
+      existingSubmission.evaluationCompletedAt = new Date();
+
+      await existingSubmission.save();
+      console.log(`✅ Updated grademind submission for ${studentName}`);
+      return res.json({ submissionId: existingSubmission._id, updated: true });
+    }
+
+    // Create new submission
+    const submission = new Submission({
+      assignmentId,
+      studentId: studentId || studentName,
+      studentName: studentName,
+      submissionFile: `grademind-${sectionName || 'default'}-${studentName}`,
+      processingStatus: 'completed',
+      evaluationStatus: 'completed',
+      evaluationCompletedAt: new Date(),
+      overallGrade: evaluationResult.score,
+      totalPossible: evaluationResult.maxScore,
+      evaluationResult: {
+        overallGrade: evaluationResult.score,
+        totalPossible: evaluationResult.maxScore,
+        letterGrade: evaluationResult.letterGrade,
+        feedback: evaluationResult.feedback,
+        strengths: evaluationResult.strengths,
+        areasForImprovement: evaluationResult.weaknesses,
+        questionScores: questionScores
+      }
+    });
+
+    await submission.save();
+    console.log(`✅ Saved grademind submission for ${studentName} (ID: ${submission._id})`);
+
+    res.json({ submissionId: submission._id, created: true });
+  } catch (error) {
+    console.error('❌ Error saving grademind result:', error);
     res.status(500).json({ error: error.message });
   }
 });
