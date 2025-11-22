@@ -1,46 +1,31 @@
-const Redis = require('ioredis');
+const { Redis } = require('@upstash/redis');
 
 let redis = null;
 let isConnected = false;
 
-// Initialize Redis connection
+// Initialize Redis connection using Upstash REST API
 function initRedis() {
-  if (!process.env.REDIS_URL) {
-    console.log('⚠️ REDIS_URL not configured, caching disabled');
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!url || !token) {
+    console.log('⚠️ UPSTASH_REDIS_REST_URL/TOKEN not configured, caching disabled');
     return null;
   }
 
   try {
-    redis = new Redis(process.env.REDIS_URL, {
-      maxRetriesPerRequest: 3,
-      retryDelayOnFailover: 100,
-      enableReadyCheck: true,
-      connectTimeout: 5000,
-      lazyConnect: true
+    redis = new Redis({
+      url,
+      token
     });
 
-    redis.on('connect', () => {
-      isConnected = true;
-      console.log('✅ Redis connected');
-    });
-
-    redis.on('error', (err) => {
-      console.error('❌ Redis error:', err.message);
-      isConnected = false;
-    });
-
-    redis.on('close', () => {
-      isConnected = false;
-    });
-
-    // Connect
-    redis.connect().catch(err => {
-      console.error('❌ Redis connection failed:', err.message);
-    });
+    isConnected = true;
+    console.log('✅ Redis (Upstash REST) initialized');
 
     return redis;
   } catch (error) {
     console.error('❌ Failed to initialize Redis:', error.message);
+    isConnected = false;
     return null;
   }
 }
@@ -52,7 +37,11 @@ async function getCache(key) {
   try {
     const data = await redis.get(key);
     if (data) {
-      return JSON.parse(data);
+      // Upstash REST already parses JSON, but handle both cases
+      if (typeof data === 'string') {
+        return JSON.parse(data);
+      }
+      return data;
     }
     return null;
   } catch (error) {
@@ -93,7 +82,7 @@ async function deleteCachePattern(pattern) {
 
   try {
     const keys = await redis.keys(pattern);
-    if (keys.length > 0) {
+    if (keys && keys.length > 0) {
       await redis.del(...keys);
     }
     return true;
