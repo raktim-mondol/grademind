@@ -451,6 +451,8 @@ router.post('/save-result', async (req, res) => {
         feedback: evaluationResult.feedback,
         strengths: evaluationResult.strengths,
         areasForImprovement: evaluationResult.weaknesses,
+        actionableTips: evaluationResult.actionableTips,
+        lostMarks: evaluationResult.lostMarks,
         questionScores: questionScores
       };
       existingSubmission.overallGrade = evaluationResult.score;
@@ -482,6 +484,8 @@ router.post('/save-result', async (req, res) => {
         feedback: evaluationResult.feedback,
         strengths: evaluationResult.strengths,
         areasForImprovement: evaluationResult.weaknesses,
+        actionableTips: evaluationResult.actionableTips,
+        lostMarks: evaluationResult.lostMarks,
         questionScores: questionScores
       }
     });
