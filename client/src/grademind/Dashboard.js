@@ -94,6 +94,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
               strengths: sub.evaluationResult.strengths || [],
               weaknesses: sub.evaluationResult.areasForImprovement || [],
               actionableTips: sub.evaluationResult.actionableTips || '',
+              lostMarks: sub.evaluationResult.lostMarks || [],
               questionScores: sub.evaluationResult.questionScores || []
             } : null,
             backendId: sub._id
