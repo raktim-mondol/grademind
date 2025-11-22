@@ -85,9 +85,17 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             status: sub.evaluationStatus === 'completed' ? 'completed' :
                     sub.evaluationStatus === 'failed' ? 'error' :
                     sub.evaluationStatus === 'processing' ? 'grading' : 'pending',
-            result: sub.evaluationResult,
-            score: sub.overallGrade,
-            totalPossible: sub.totalPossible,
+            // Transform backend evaluationResult format to frontend format
+            result: sub.evaluationResult ? {
+              score: sub.evaluationResult.overallGrade ?? sub.overallGrade ?? 0,
+              maxScore: sub.evaluationResult.totalPossible ?? sub.totalPossible ?? 100,
+              letterGrade: sub.evaluationResult.letterGrade || '',
+              feedback: sub.evaluationResult.feedback || '',
+              strengths: sub.evaluationResult.strengths || [],
+              weaknesses: sub.evaluationResult.areasForImprovement || [],
+              actionableTips: sub.evaluationResult.actionableTips || '',
+              questionScores: sub.evaluationResult.questionScores || []
+            } : null,
             backendId: sub._id
           }));
 
