@@ -448,7 +448,7 @@ EVALUATION INSTRUCTIONS:
    }
 12. Provide an overall grade (sum of question/subquestion scores), ensuring it does not exceed the total possible score.
 13. Provide a list of strengths observed in the submission (considering all content).
-14. Provide a list of areas for improvement (considering all content).
+14. Provide a list of areas for improvement. **Each item MUST specify the question/section number where marks were lost, the number of points deducted, and a clear explanation of why marks were lost** (e.g., "Question 2b (-3 points): Missing error handling for edge cases and no validation of input parameters").
 15. Provide concrete suggestions for the student.
 ${rubricCriteria.length > 0 ? '\n**REMINDER: When a rubric is provided, it is the PRIMARY grading standard. All scores and feedback must align with the rubric criteria.**' : ''}
 
@@ -511,7 +511,7 @@ Provide your response ONLY as a valid JSON object matching the requested structu
     - "earnedScore": <number>
     - "feedback": <string>
 - "strengths": Array of strings (minimum 3 strengths).
-- "areasForImprovement": Array of strings (minimum 2 areas).
+- "areasForImprovement": Array of strings (minimum 2 areas). **Each entry MUST follow this format: "Question X (-Y points): Reason for mark deduction"** (e.g., "Question 1a (-2 points): Incomplete implementation of the sorting algorithm, missing the merge step").
 - "suggestions": Array of strings (minimum 2 concrete suggestions).
 
 **YOU MUST NEVER SKIP SUBSECTION DETAILS IN criteriaGrades. Every question needs granular grading entries with detailed feedback.**
@@ -841,7 +841,7 @@ EVALUATION INSTRUCTIONS:
 11. Consider code quality, correctness, documentation, and results when grading.
 12. Provide an overall grade (sum of question/subquestion scores), ensuring it does not exceed the total possible score.
 13. Provide a list of strengths observed in the submission.
-14. Provide a list of areas for improvement.
+14. Provide a list of areas for improvement. **Each item MUST specify the question/section number where marks were lost, the number of points deducted, and a clear explanation of why marks were lost** (e.g., "Question 2b (-3 points): Missing error handling for edge cases and no validation of input parameters").
 15. Provide concrete suggestions for the student.
 ${rubricCriteria.length > 0 ? '\n**REMINDER: When a rubric is provided, it is the PRIMARY grading standard. All scores and feedback must align with the rubric criteria.**' : ''}
 
@@ -855,7 +855,7 @@ Provide your response ONLY as a valid JSON object matching the requested structu
   * "score": <number> (points awarded)
   * "maxScore": <number> (maximum possible points)
   * "feedback": <string> (detailed explanation, minimum 20 words)
-  
+
   **CRITICAL RULES FOR criteriaGrades:**
   1. EVERY question from the question structure MUST have AT LEAST ONE entry in criteriaGrades
   2. If a question has no explicit subsections, create ONE criteriaGrade entry for that entire question
@@ -863,7 +863,7 @@ Provide your response ONLY as a valid JSON object matching the requested structu
   4. Question numbers in criteriaGrades MUST match the question structure exactly
   5. The sum of all scores in criteriaGrades MUST equal overallGrade
   6. Each criteriaGrade entry MUST have substantive feedback (minimum 20 words)
-  
+
   Example for a simple question with no subsections:
   {
     "questionNumber": "1",
@@ -872,7 +872,7 @@ Provide your response ONLY as a valid JSON object matching the requested structu
     "maxScore": 10,
     "feedback": "The solution demonstrates good understanding of the core concepts. Code implementation is correct but could benefit from better documentation and error handling."
   }
-  
+
   Example for a question with subsections:
   [
     {
@@ -883,7 +883,7 @@ Provide your response ONLY as a valid JSON object matching the requested structu
       "feedback": "Correctly loaded the dataset using pandas. Proper handling of missing values and data types. Clean preprocessing pipeline implemented."
     },
     {
-      "questionNumber": "2b", 
+      "questionNumber": "2b",
       "criterionName": "Question 2b: Statistical Analysis and Visualization",
       "score": 5,
       "maxScore": 7,
@@ -904,7 +904,7 @@ Provide your response ONLY as a valid JSON object matching the requested structu
     - "earnedScore": <number>
     - "feedback": <string>
 - "strengths": Array of strings (minimum 3 strengths).
-- "areasForImprovement": Array of strings (minimum 2 areas).
+- "areasForImprovement": Array of strings (minimum 2 areas). **Each entry MUST follow this format: "Question X (-Y points): Reason for mark deduction"** (e.g., "Question 1a (-2 points): Incomplete implementation of the sorting algorithm, missing the merge step").
 - "suggestions": Array of strings (minimum 2 concrete suggestions).
 
 **YOU MUST NEVER SKIP SUBSECTION DETAILS IN criteriaGrades. Every question needs granular grading entries with detailed feedback.**
