@@ -63,6 +63,7 @@ app.use('/api/assignments', require('./routes/assignments'));
 app.use('/api/submissions', require('./routes/submissions'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/grademind', require('./routes/grademind'));
+app.use('/api/packages', require('./routes/packages'));
 
 // Base route
 app.get('/', (req, res) => {
