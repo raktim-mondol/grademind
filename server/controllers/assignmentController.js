@@ -423,7 +423,7 @@ exports.deleteAssignment = async (req, res) => {
       assignment.rubricFile,
       assignment.solutionFile
     ].filter(Boolean);
-    
+
     for (const filePath of filesToDelete) {
       try {
         await fs.unlink(filePath);
@@ -434,7 +434,33 @@ exports.deleteAssignment = async (req, res) => {
         }
       }
     }
-    
+
+    // Delete all submissions associated with this assignment
+    const submissions = await Submission.find({ assignmentId: req.params.id });
+
+    // Delete submission files
+    for (const submission of submissions) {
+      const submissionFiles = [
+        submission.submissionFile,
+        submission.originalFilePath,
+        submission.processedFilePath
+      ].filter(Boolean);
+
+      for (const filePath of submissionFiles) {
+        try {
+          await fs.unlink(filePath);
+        } catch (err) {
+          if (err.code !== 'ENOENT') {
+            console.error(`Error deleting submission file ${filePath}:`, err);
+          }
+        }
+      }
+    }
+
+    // Delete submission documents
+    const deleteResult = await Submission.deleteMany({ assignmentId: req.params.id });
+    console.log(`Deleted ${deleteResult.deletedCount} submissions for assignment ${req.params.id}`);
+
     // Delete the assignment document
     await Assignment.findByIdAndDelete(req.params.id);
     
