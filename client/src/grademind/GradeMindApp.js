@@ -332,20 +332,23 @@ function GradeMindApp() {
   const handleDeleteAssignment = async (id) => {
     if (window.confirm('Are you sure you want to delete this assignment?')) {
       try {
+        console.log('🗑️ Deleting assignment:', id);
+
         // Get auth token from Clerk
         const token = await window.Clerk?.session?.getToken();
 
         // Call backend API to delete
-        await api.delete(`/assignments/${id}`, {
+        const response = await api.delete(`/assignments/${id}`, {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         });
 
-        console.log('✅ Assignment deleted from backend:', id);
+        console.log('✅ Assignment deleted from backend:', id, response.data);
 
         // Remove from local state
         setAssignments(prev => prev.filter(a => a.id !== id));
       } catch (error) {
         console.error('❌ Error deleting assignment:', error);
+        console.error('Response:', error.response?.data);
         alert(`Failed to delete assignment: ${error.response?.data?.error || error.message}`);
       }
     }
