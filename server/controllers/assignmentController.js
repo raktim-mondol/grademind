@@ -294,7 +294,9 @@ exports.updateAssignment = async (req, res) => {
         try {
           await fs.unlink(assignment.assignmentFile);
         } catch (err) {
-          console.error('Error deleting old assignment file:', err);
+          if (err.code !== 'ENOENT') {
+            console.error('Error deleting old assignment file:', err);
+          }
         }
       }
       
@@ -326,7 +328,9 @@ exports.updateAssignment = async (req, res) => {
         try {
           await fs.unlink(assignment.rubricFile);
         } catch (err) {
-          console.error('Error deleting old rubric file:', err);
+          if (err.code !== 'ENOENT') {
+            console.error('Error deleting old rubric file:', err);
+          }
         }
       }
       
@@ -356,7 +360,9 @@ exports.updateAssignment = async (req, res) => {
         try {
           await fs.unlink(assignment.solutionFile);
         } catch (err) {
-          console.error('Error deleting old solution file:', err);
+          if (err.code !== 'ENOENT') {
+            console.error('Error deleting old solution file:', err);
+          }
         }
       }
       
@@ -422,7 +428,10 @@ exports.deleteAssignment = async (req, res) => {
       try {
         await fs.unlink(filePath);
       } catch (err) {
-        console.error(`Error deleting file ${filePath}:`, err);
+        // Ignore ENOENT errors (file doesn't exist) - common on ephemeral storage like Railway
+        if (err.code !== 'ENOENT') {
+          console.error(`Error deleting file ${filePath}:`, err);
+        }
       }
     }
     
