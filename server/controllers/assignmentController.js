@@ -13,6 +13,7 @@ const { isConnected } = require('../config/db');
 const { getUserId, isAuthenticated, verifyOwnership } = require('../utils/authHelper');
 const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
 const { getCache, setCache, deleteCache, cacheKeys, isRedisConnected } = require('../config/redis');
+const extractionService = require('../utils/extractionService');
 
 // Create a new assignment
 exports.createAssignment = async (req, res) => {
@@ -25,11 +26,11 @@ exports.createAssignment = async (req, res) => {
     // Check database connection first
     if (!isConnected()) {
       console.error('Database is not connected');
-      return res.status(500).json({ 
-        error: 'Database connection error. Please ensure MongoDB is running and try again.' 
+      return res.status(500).json({
+        error: 'Database connection error. Please ensure MongoDB is running and try again.'
       });
     }
-    
+
     const { title, description, dueDate, course, totalPoints, questionStructure, sections, assignmentText } = req.body;
 
     // Get file paths
@@ -60,11 +61,11 @@ exports.createAssignment = async (req, res) => {
         if (typeof sections === 'string') {
           parsedSections = JSON.parse(sections);
           if (!Array.isArray(parsedSections)) {
-             console.warn('Parsed sections is not an array:', parsedSections);
-             parsedSections = [];
+            console.warn('Parsed sections is not an array:', parsedSections);
+            parsedSections = [];
           }
         } else {
-           console.warn('Sections data received is not a string:', sections);
+          console.warn('Sections data received is not a string:', sections);
         }
       }
     } catch (error) {
@@ -100,11 +101,11 @@ exports.createAssignment = async (req, res) => {
 
     // Save assignment to database
     try {
-       await assignment.save();
-       console.log('Assignment saved successfully:', assignment._id);
+      await assignment.save();
+      console.log('Assignment saved successfully:', assignment._id);
     } catch (dbError) {
-       console.error('Error saving assignment to database:', dbError);
-       return res.status(500).json({ error: 'Failed to save assignment data.' });
+      console.error('Error saving assignment to database:', dbError);
+      return res.status(500).json({ error: 'Failed to save assignment data.' });
     }
 
     // Process assignment (PDF or text) with Gemini and queue jobs
@@ -132,30 +133,30 @@ exports.createAssignment = async (req, res) => {
             totalPoints: assignment.totalPoints
           }).save();
           console.log('Rubric queued for PDF processing:', assignment._id);
-                 } catch (rubricError) {
-           console.error(`Error queueing rubric PDF ${rubricFilePath}:`, rubricError);
-           assignment.rubricProcessingStatus = 'failed';
-           assignment.rubricProcessingError = 'Error queueing rubric for processing.';
-           await assignment.save();
+        } catch (rubricError) {
+          console.error(`Error queueing rubric PDF ${rubricFilePath}:`, rubricError);
+          assignment.rubricProcessingStatus = 'failed';
+          assignment.rubricProcessingError = 'Error queueing rubric for processing.';
+          await assignment.save();
         }
       }
 
       // Process solution if available
       if (solutionFilePath) {
-         try {
-            await solutionProcessingQueue.createJob({
-              assignmentId: assignment._id,
-              pdfFilePath: solutionFilePath,
-              questionStructure: parsedQuestionStructure,
-              totalPoints: assignment.totalPoints
-            }).save();
-            console.log('Solution queued for PDF processing:', assignment._id);
-         } catch (solutionError) {
-            console.error(`Error queueing solution PDF ${solutionFilePath}:`, solutionError);
-            assignment.solutionProcessingStatus = 'failed';
-            assignment.solutionProcessingError = 'Error queueing solution for processing.';
-            await assignment.save();
-         }
+        try {
+          await solutionProcessingQueue.createJob({
+            assignmentId: assignment._id,
+            pdfFilePath: solutionFilePath,
+            questionStructure: parsedQuestionStructure,
+            totalPoints: assignment.totalPoints
+          }).save();
+          console.log('Solution queued for PDF processing:', assignment._id);
+        } catch (solutionError) {
+          console.error(`Error queueing solution PDF ${solutionFilePath}:`, solutionError);
+          assignment.solutionProcessingStatus = 'failed';
+          assignment.solutionProcessingError = 'Error queueing solution for processing.';
+          await assignment.save();
+        }
       }
 
     } catch (processingError) {
@@ -174,9 +175,9 @@ exports.createAssignment = async (req, res) => {
       }
 
       try {
-         await assignment.save();
+        await assignment.save();
       } catch (saveError) {
-         console.error('Additionally failed to save error status after processing error:', saveError);
+        console.error('Additionally failed to save error status after processing error:', saveError);
       }
 
       return res.status(500).json({ error: 'Failed to process uploaded files.' });
@@ -268,7 +269,7 @@ exports.updateAssignment = async (req, res) => {
     if (!verifyOwnership(assignment.userId, req)) {
       return res.status(403).json({ error: 'Access denied. You do not own this assignment.' });
     }
-    
+
     // Parse question structure if provided
     let parsedQuestionStructure = assignment.questionStructure || [];
     try {
@@ -278,7 +279,7 @@ exports.updateAssignment = async (req, res) => {
     } catch (error) {
       console.warn('Failed to parse question structure:', error);
     }
-    
+
     // Update fields
     assignment.title = title || assignment.title;
     assignment.description = description || assignment.description;
@@ -286,7 +287,7 @@ exports.updateAssignment = async (req, res) => {
     assignment.course = course || assignment.course;
     assignment.totalPoints = totalPoints || assignment.totalPoints || 100;
     assignment.questionStructure = parsedQuestionStructure;
-    
+
     // Handle file updates if provided
     if (req.files?.assignment?.[0]?.path) {
       // Delete old file if it exists
@@ -299,12 +300,12 @@ exports.updateAssignment = async (req, res) => {
           }
         }
       }
-      
+
       // Set new file path
       const assignmentFilePath = req.files.assignment[0].path;
       assignment.assignmentFile = assignmentFilePath;
       assignment.processingStatus = 'pending';
-      
+
       // Queue PDF for processing
       try {
         await assignmentProcessingQueue.createJob({
@@ -313,7 +314,7 @@ exports.updateAssignment = async (req, res) => {
           questionStructure: parsedQuestionStructure,
           totalPoints: totalPoints || assignment.totalPoints || 100
         }).save();
-        
+
         console.log('Updated assignment queued for PDF processing:', assignment._id);
       } catch (error) {
         console.error('Error queueing updated assignment PDF:', error);
@@ -321,7 +322,7 @@ exports.updateAssignment = async (req, res) => {
         assignment.processingError = 'Error queueing updated assignment PDF for processing';
       }
     }
-    
+
     // Similar handling for rubric file
     if (req.files?.rubric?.[0]?.path) {
       if (assignment.rubricFile) {
@@ -333,11 +334,11 @@ exports.updateAssignment = async (req, res) => {
           }
         }
       }
-      
+
       const rubricFilePath = req.files.rubric[0].path;
       assignment.rubricFile = rubricFilePath;
       assignment.rubricProcessingStatus = 'pending';
-      
+
       try {
         await rubricProcessingQueue.createJob({
           assignmentId: assignment._id,
@@ -345,7 +346,7 @@ exports.updateAssignment = async (req, res) => {
           questionStructure: parsedQuestionStructure,
           totalPoints: totalPoints || assignment.totalPoints || 100
         }).save();
-        
+
         console.log('Updated rubric queued for PDF processing:', assignment._id);
       } catch (error) {
         console.error('Error queueing updated rubric PDF:', error);
@@ -353,7 +354,7 @@ exports.updateAssignment = async (req, res) => {
         assignment.rubricProcessingError = 'Error queueing updated rubric PDF for processing';
       }
     }
-    
+
     // Similar handling for solution file
     if (req.files?.solution?.[0]?.path) {
       if (assignment.solutionFile) {
@@ -365,11 +366,11 @@ exports.updateAssignment = async (req, res) => {
           }
         }
       }
-      
+
       const solutionFilePath = req.files.solution[0].path;
       assignment.solutionFile = solutionFilePath;
       assignment.solutionProcessingStatus = 'pending';
-      
+
       try {
         await solutionProcessingQueue.createJob({
           assignmentId: assignment._id,
@@ -377,7 +378,7 @@ exports.updateAssignment = async (req, res) => {
           questionStructure: parsedQuestionStructure,
           totalPoints: totalPoints || assignment.totalPoints || 100
         }).save();
-        
+
         console.log('Updated solution queued for PDF processing:', assignment._id);
       } catch (error) {
         console.error('Error queueing updated solution PDF:', error);
@@ -385,10 +386,10 @@ exports.updateAssignment = async (req, res) => {
         assignment.solutionProcessingError = 'Error queueing updated solution PDF for processing';
       }
     }
-    
+
     // Save the updated assignment
     await assignment.save();
-    
+
     res.status(200).json({
       message: 'Assignment updated successfully',
       assignment
@@ -416,7 +417,7 @@ exports.deleteAssignment = async (req, res) => {
     if (!verifyOwnership(assignment.userId, req)) {
       return res.status(403).json({ error: 'Access denied. You do not own this assignment.' });
     }
-    
+
     // Delete associated files
     const filesToDelete = [
       assignment.assignmentFile,
@@ -463,7 +464,7 @@ exports.deleteAssignment = async (req, res) => {
 
     // Delete the assignment document
     await Assignment.findByIdAndDelete(req.params.id);
-    
+
     res.status(200).json({
       message: 'Assignment deleted successfully'
     });
@@ -535,8 +536,8 @@ exports.getProcessingStatus = async (req, res) => {
     // Cache the response (include userId for ownership verification)
     // Use shorter TTL (10s) if still processing, longer (60s) if complete
     const isProcessing = assignment.processingStatus === 'processing' ||
-                         assignment.rubricProcessingStatus === 'processing' ||
-                         assignment.solutionProcessingStatus === 'processing';
+      assignment.rubricProcessingStatus === 'processing' ||
+      assignment.solutionProcessingStatus === 'processing';
     const ttl = isProcessing ? 10 : 60;
 
     await setCache(cacheKey, { ...responseData, userId: assignment.userId }, ttl);
@@ -558,11 +559,11 @@ function getEvaluationReadiness(assignment) {
   if (assignment.processingStatus === 'failed') {
     return 'not_ready';
   }
-  
+
   if (assignment.processingStatus === 'completed') {
     const rubricReady = assignment.rubricProcessingStatus === 'completed' || assignment.rubricProcessingStatus === 'not_applicable';
     const solutionReady = assignment.solutionProcessingStatus === 'completed' || assignment.solutionProcessingStatus === 'not_applicable';
-    
+
     if (rubricReady && solutionReady) {
       // If orchestration is being used and completed, return ready
       // If orchestration failed, still return ready (it's optional for evaluation)
@@ -574,7 +575,7 @@ function getEvaluationReadiness(assignment) {
     }
     return 'partial';
   }
-  
+
   return 'not_ready';
 }
 
@@ -601,15 +602,15 @@ exports.rerunOrchestration = async (req, res) => {
     if (!verifyOwnership(assignment.userId, req)) {
       return res.status(403).json({ error: 'Access denied. You do not own this assignment.' });
     }
-    
+
     // Check if all required processing is complete
     if (assignment.processingStatus !== 'completed') {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Assignment must be fully processed before re-running orchestration',
         currentStatus: assignment.processingStatus
       });
     }
-    
+
     // Reset orchestration status and enable it
     await Assignment.findByIdAndUpdate(assignmentId, {
       orchestrationStatus: 'pending',  // Enable and reset to pending
@@ -617,28 +618,134 @@ exports.rerunOrchestration = async (req, res) => {
       orchestrationStartedAt: null,
       orchestrationCompletedAt: null
     });
-    
+
     console.log(`Orchestration status set to pending (enabled) for assignment ${assignmentId}`);
-    
+
     // Queue orchestration job with force re-read option
     await orchestrationQueue.createJob({
       assignmentId: assignmentId,
       forceReread: forceReread || false  // Pass flag to orchestration processor
     }).save();
-    
+
     console.log(`Orchestration job queued for assignment ${assignmentId}`);
-    
-    res.status(200).json({ 
+
+    res.status(200).json({
       message: 'Orchestration re-run initiated successfully',
       assignmentId: assignmentId,
       forceReread: forceReread || false
     });
-    
+
   } catch (error) {
     console.error('Error re-running orchestration:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'An error occurred while re-running orchestration',
-      details: error.message 
+      details: error.message
     });
+  }
+};
+
+// Extract metadata (Questions, Rubric, System Prompt) from assignment files
+exports.extractMetadata = async (req, res) => {
+  try {
+    if (!isAuthenticated(req)) {
+      return res.status(401).json({ error: 'User authentication required' });
+    }
+
+    const assignmentId = req.params.id;
+    let assignment = null;
+
+    if (assignmentId) {
+      assignment = await Assignment.findById(assignmentId);
+      if (!assignment) {
+        return res.status(404).json({ error: 'Assignment not found' });
+      }
+      // Verify ownership
+      if (!verifyOwnership(assignment.userId, req)) {
+        return res.status(403).json({ error: 'Access denied. You do not own this assignment.' });
+      }
+      console.log(`🤖 Starting AI Extraction for Assignment ${assignmentId}`);
+    } else {
+      console.log(`🤖 Starting AI Extraction for New Assignment (No ID)`);
+    }
+
+    // Determine paths (use uploaded files first, then existing files if assignment exists)
+    const assignmentPath = req.files?.assignment?.[0]?.path || assignment?.assignmentFile;
+    const rubricPath = req.files?.rubric?.[0]?.path || assignment?.rubricFile;
+    const solutionPath = req.files?.solution?.[0]?.path || assignment?.solutionFile;
+
+    if (!assignmentPath) {
+      return res.status(400).json({ error: 'No assignment file available to parse.' });
+    }
+
+    const updates = {};
+    let questionsData = {};
+    let rubricData = {};
+    let solutionData = {};
+
+    // 1. Extract Questions
+    try {
+      console.log('   Parsing Assignment Questions/Structure...');
+      // Pass mimeType if possible, but extractionService defaults to pdf or handles it
+      questionsData = await extractionService.extractQuestions(assignmentPath);
+      updates.questionsData = questionsData;
+    } catch (err) {
+      console.error('Error extracting questions:', err);
+    }
+
+    // 2. Extract Rubric
+    try {
+      const pathForRubric = rubricPath || assignmentPath; // Use assignment file if no rubric file
+      console.log('   Parsing Rubric...');
+      rubricData = await extractionService.extractRubric(pathForRubric);
+      updates.rubricData = rubricData;
+    } catch (err) {
+      console.error('Error extracting rubric:', err);
+    }
+
+    // 3. Extract Solution (if available)
+    try {
+      if (solutionPath) {
+        console.log('   Parsing Solution...');
+        solutionData = await extractionService.extractSolution(solutionPath);
+        updates.solutionData = solutionData;
+      }
+    } catch (err) {
+      console.error('Error extracting solution:', err);
+    }
+
+    // 4. Generate Grading System Prompt
+    try {
+      if (questionsData && rubricData) {
+        console.log('   Generating Grading System Prompt...');
+        // Pass solutionData if available (it might be empty object if no solution, so check keys or null)
+        const solutionDataForPrompt = (Object.keys(solutionData).length > 0) ? solutionData : null;
+
+        const systemPrompt = await extractionService.generateGradingSystemPrompt(questionsData, rubricData, solutionDataForPrompt);
+        updates.gradingSystemPrompt = systemPrompt;
+      }
+    } catch (err) {
+      console.error('Error generating system prompt:', err);
+    }
+
+    // Apply updates if assignment exists
+    if (assignment) {
+      Object.assign(assignment, updates);
+      await assignment.save();
+      console.log('✅ Extraction complete and saved to assignment.');
+    } else {
+      console.log('✅ Extraction complete (returned to client).');
+    }
+
+    res.status(200).json({
+      message: 'Assignment metadata extracted successfully',
+      questionsData: updates.questionsData,
+      rubricData: updates.rubricData,
+      solutionData: updates.solutionData,
+      gradingSystemPrompt: updates.gradingSystemPrompt
+    });
+
+  } catch (error) {
+    console.error('Error extracting assignment metadata:', error);
+    res.status(500).json({ error: 'Failed to extract metadata: ' + error.message });
   }
 };

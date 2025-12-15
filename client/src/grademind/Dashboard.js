@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Users, Brain, Loader2, FileText, CheckCircle, X, BarChart3, Download, ChevronLeft, Plus, LayoutGrid, Trash2, Pencil, Cpu, Menu } from './Icons';
+import { Upload, Users, Brain, Loader2, FileText, CheckCircle, X, BarChart3, Download, ChevronLeft, ChevronRight, Plus, LayoutGrid, Trash2, Pencil, Cpu, Menu, PieChart, Code, BookOpen, Sparkles } from './Icons';
 import api from '../utils/api';
 
 const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
@@ -46,13 +46,13 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
     const interval = setInterval(() => {
       // Check if all documents have finished processing (not just evaluationReadyStatus)
       const assignmentDone = processingStatus?.assignmentProcessingStatus === 'completed' ||
-                             processingStatus?.assignmentProcessingStatus === 'failed';
+        processingStatus?.assignmentProcessingStatus === 'failed';
       const rubricDone = processingStatus?.rubricProcessingStatus === 'completed' ||
-                         processingStatus?.rubricProcessingStatus === 'failed' ||
-                         processingStatus?.rubricProcessingStatus === 'not_applicable';
+        processingStatus?.rubricProcessingStatus === 'failed' ||
+        processingStatus?.rubricProcessingStatus === 'not_applicable';
       const solutionDone = processingStatus?.solutionProcessingStatus === 'completed' ||
-                           processingStatus?.solutionProcessingStatus === 'failed' ||
-                           processingStatus?.solutionProcessingStatus === 'not_applicable';
+        processingStatus?.solutionProcessingStatus === 'failed' ||
+        processingStatus?.solutionProcessingStatus === 'not_applicable';
 
       const allProcessingComplete = assignmentDone && rubricDone && solutionDone;
 
@@ -104,8 +104,8 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             content: sub.submissionFile,
             fileType: sub.fileType || 'pdf',
             status: sub.evaluationStatus === 'completed' ? 'completed' :
-                    sub.evaluationStatus === 'failed' ? 'error' :
-                    sub.evaluationStatus === 'processing' ? 'grading' : 'pending',
+              sub.evaluationStatus === 'failed' ? 'error' :
+                sub.evaluationStatus === 'processing' ? 'grading' : 'pending',
             // Transform backend evaluationResult format to frontend format
             result: sub.evaluationResult ? {
               score: sub.evaluationResult.overallGrade ?? sub.overallGrade ?? 0,
@@ -289,24 +289,45 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
   const handleFileUpload = async (e) => {
     if (!activeSection) return;
 
+    // Check if any submission is currently being evaluated
+    const hasEvaluatingSubmissions = activeSection.students.some(s => s.status === 'grading');
+    if (hasEvaluatingSubmissions) {
+      alert('⚠️ Cannot upload new submissions while evaluations are in progress.\n\nPlease wait for all current evaluations to complete before uploading more submissions.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     const newStudents = [];
+    const duplicates = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const fileExtension = file.name.split('.').pop().toLowerCase();
+      const fileName = file.name;
 
-      // For PDFs, store the file object for later upload
+      // Check if a student with the same filename already exists in this section
+      const isDuplicate = activeSection.students.some(
+        student => student.file?.name === fileName || 
+                   `${student.name}.${fileExtension}` === fileName
+      );
+
+      if (isDuplicate) {
+        duplicates.push(fileName);
+        continue; // Skip duplicate files
+      }
+
+      // For PDFs and Notebooks, store the file object for later upload
       // For text files, read the content
-      if (fileExtension === 'pdf') {
+      if (fileExtension === 'pdf' || fileExtension === 'ipynb') {
         newStudents.push({
           id: crypto.randomUUID(),
           name: file.name.replace(/\.[^/.]+$/, ""),
-          file: file, // Store the actual file object for PDF upload
-          content: `[PDF file: ${file.name}]`,
-          fileType: 'pdf',
+          file: file, // Store the actual file object for upload
+          content: `[${fileExtension.toUpperCase()} file: ${file.name}]`,
+          fileType: fileExtension,
           status: 'pending'
         });
       } else {
@@ -329,13 +350,20 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
       }
     }
 
-    const updatedSection = {
-      ...activeSection,
-      students: [...activeSection.students, ...newStudents]
-    };
+    // Show warning if duplicates were found
+    if (duplicates.length > 0) {
+      alert(`⚠️ The following files were not added because they already exist:\n\n${duplicates.join('\n')}\n\nPlease delete the existing submissions if you want to re-evaluate.`);
+    }
 
-    const updatedSections = assignment.sections.map(s => s.id === activeSection.id ? updatedSection : s);
-    onUpdateAssignment({ ...assignment, sections: updatedSections });
+    if (newStudents.length > 0) {
+      const updatedSection = {
+        ...activeSection,
+        students: [...activeSection.students, ...newStudents]
+      };
+
+      const updatedSections = assignment.sections.map(s => s.id === activeSection.id ? updatedSection : s);
+      onUpdateAssignment({ ...assignment, sections: updatedSections });
+    }
 
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -359,14 +387,14 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
         try {
           let response;
 
-          // Check if this is a PDF file that needs to be uploaded
-          if (studentsToGrade[i].fileType === 'pdf' && studentsToGrade[i].file) {
-            // Use FormData to upload the PDF file
+          // Check if this is a PDF or IPYNB file that needs to be uploaded
+          if ((studentsToGrade[i].fileType === 'pdf' || studentsToGrade[i].fileType === 'ipynb') && studentsToGrade[i].file) {
+            // Use FormData to upload the file
             const formData = new FormData();
             formData.append('file', studentsToGrade[i].file);
             formData.append('config', JSON.stringify(assignment.config));
 
-            console.log(`📄 Uploading PDF for evaluation: ${studentsToGrade[i].name}`);
+            console.log(`📄 Uploading ${studentsToGrade[i].fileType.toUpperCase()} for evaluation: ${studentsToGrade[i].name}`);
 
             response = await api.post('/grademind/evaluate', formData, {
               headers: {
@@ -430,7 +458,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
     setIsProcessing(false);
   };
 
-  const exportCsv = async () => {
+  const exportExcel = async () => {
     if (!assignment.backendId) {
       alert('Assignment not yet saved to backend');
       return;
@@ -438,20 +466,21 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
 
     try {
       const token = await window.Clerk?.session?.getToken();
-      const response = await api.get(`/submissions/${assignment.backendId}/export-csv`, {
+      // Use the standard export endpoint which generates Excel with multiple sheets
+      const response = await api.get(`/submissions/${assignment.backendId}/export`, {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         responseType: 'blob'
       });
 
       // Create download link
-      const blob = new Blob([response.data], { type: 'text/csv' });
+      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
 
       // Extract filename from Content-Disposition header or use default
       const contentDisposition = response.headers['content-disposition'];
-      let filename = 'detailed_marks.csv';
+      let filename = 'detailed_marks.xlsx';
       if (contentDisposition) {
         const match = contentDisposition.match(/filename="?([^";\n]+)"?/);
         if (match) filename = match[1];
@@ -463,15 +492,15 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error exporting CSV:', error);
-      alert('Failed to export CSV: ' + (error.response?.data?.error || error.message));
+      console.error('Error exporting Excel:', error);
+      alert('Failed to export Excel: ' + (error.response?.data?.error || error.message));
     }
   };
 
   const getGradeColor = (grade) => {
     if (!grade) return 'bg-zinc-100 text-zinc-500';
-    if (grade.startsWith('A')) return 'bg-zinc-900 text-white';
-    if (grade.startsWith('B')) return 'bg-zinc-200 text-zinc-900';
+    if (grade.startsWith('A')) return 'bg-black text-white';
+    if (grade.startsWith('B')) return 'bg-zinc-200 text-black';
     if (grade.startsWith('C')) return 'bg-zinc-100 text-zinc-700';
     return 'bg-red-50 text-red-600 border border-red-100';
   };
@@ -522,15 +551,20 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
         transform transition-transform duration-300 ease-in-out
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
-        <div className="p-4 border-b border-zinc-200">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2 text-xs font-medium text-zinc-500 hover:text-black transition-colors mb-4"
-          >
-            <ChevronLeft className="w-3 h-3" /> Back to Workspaces
-          </button>
-          <h2 className="font-bold text-zinc-900 leading-tight line-clamp-2">{assignment.config.title}</h2>
-          <div className="mt-1 text-xs text-zinc-500 font-mono">Total: {assignment.config.totalScore || 100} Pts</div>
+        <div className="h-16 border-b border-zinc-100 flex items-start justify-between px-4 flex-shrink-0 pt-3">
+          <div className="flex-1 min-w-0">
+            <h2 className="font-bold text-black leading-tight line-clamp-1 text-sm">{assignment.config.title}</h2>
+            <div className="text-xs text-zinc-500 mt-0.5">Total: {assignment.config.totalScore || 100} Pts</div>
+          </div>
+          {isProcessingComplete && (
+            <button
+              onClick={() => setShowProcessedData(!showProcessedData)}
+              className="flex items-center justify-center text-zinc-500 hover:text-zinc-900 transition-colors flex-shrink-0 ml-2"
+              title={showProcessedData ? 'Hide processed data' : 'View processed data'}
+            >
+              <FileText className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
@@ -549,7 +583,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                 value={newSectionName}
                 onChange={e => setNewSectionName(e.target.value)}
                 placeholder="Section Name..."
-                className="w-full text-sm p-2 border border-zinc-300 rounded shadow-sm focus:ring-1 focus:ring-black focus:border-black outline-none"
+                className="w-full text-sm p-2 bg-white text-zinc-900 border border-zinc-300 rounded shadow-sm focus:ring-1 focus:ring-black focus:border-black outline-none"
                 onBlur={() => !newSectionName && setShowAddSection(false)}
               />
             </form>
@@ -564,17 +598,16 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                     value={tempSectionName}
                     onChange={(e) => setTempSectionName(e.target.value)}
                     onBlur={() => handleRenameSave()}
-                    className="w-full text-sm px-2 py-1 border border-zinc-300 rounded shadow-sm focus:ring-1 focus:ring-black focus:border-black outline-none"
+                    className="w-full text-sm px-2 py-1 bg-white text-zinc-900 border border-zinc-300 rounded shadow-sm focus:ring-1 focus:ring-black focus:border-black outline-none"
                   />
                 </form>
               ) : (
                 <button
                   onClick={() => { setActiveSectionId(section.id); setSelectedStudent(null); setSidebarOpen(false); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-md transition-all ${
-                    activeSectionId === section.id
-                      ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200'
-                      : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900'
-                  }`}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-md transition-all ${activeSectionId === section.id
+                    ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200'
+                    : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900'
+                    }`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <Users className="w-4 h-4 opacity-50 flex-shrink-0" />
@@ -614,16 +647,15 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             <div className="text-xs text-zinc-500 mb-1">Overall Progress</div>
             <div className="w-full bg-zinc-100 rounded-full h-1.5 mb-2">
               <div
-                className="bg-zinc-900 h-1.5 rounded-full transition-all duration-500"
+                className="bg-black h-1.5 rounded-full transition-all duration-500"
                 style={{
-                  width: `${
-                    (assignment.sections.flatMap(s => s.students || []).filter(s => s.status === 'completed').length /
-                      Math.max(1, assignment.sections.flatMap(s => s.students || []).length)) * 100
-                  }%`
+                  width: `${(assignment.sections.flatMap(s => s.students || []).filter(s => s.status === 'completed').length /
+                    Math.max(1, assignment.sections.flatMap(s => s.students || []).length)) * 100
+                    }%`
                 }}
               />
             </div>
-            <div className="text-xs font-medium text-zinc-900 flex justify-between">
+            <div className="text-xs font-medium text-black flex justify-between">
               <span>{assignment.sections.flatMap(s => s.students || []).filter(s => s.status === 'completed').length} Graded</span>
               <span>{assignment.sections.flatMap(s => s.students || []).length} Total</span>
             </div>
@@ -633,7 +665,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
 
       <main className="flex-1 flex flex-col min-w-0 bg-white">
         <header className="h-16 border-b border-zinc-100 flex items-center justify-between px-4 md:px-8 flex-shrink-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {/* Mobile menu button */}
             <button
               onClick={() => setSidebarOpen(true)}
@@ -641,59 +673,71 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <span className="text-zinc-400 hidden md:inline">/</span>
-            <h2 className="font-semibold text-zinc-900 truncate">{activeSection?.name}</h2>
+            {/* Back to Workspaces button */}
+            <button
+              onClick={onBack}
+              className="flex items-center gap-2 text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-50"
+            >
+              <ChevronLeft className="w-4 h-4" /> Back to Workspaces
+            </button>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* View Processed Data button */}
-            {isProcessingComplete && (
-              <button
-                onClick={() => setShowProcessedData(!showProcessedData)}
-                className="flex items-center gap-2 bg-white border border-zinc-200 text-zinc-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-zinc-50 transition-all"
-              >
-                <FileText className="w-4 h-4" />
-                {showProcessedData ? 'Hide Data' : 'View Data'}
-              </button>
-            )}
 
             {isProcessingComplete && activeSection?.students?.length === 0 ? (
-              <label className="cursor-pointer flex items-center gap-2 bg-zinc-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-zinc-800 transition-all shadow-sm hover:shadow hover:-translate-y-0.5">
+              <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-sm ${
+                isProcessing || activeSection?.students?.some(s => s.status === 'grading')
+                  ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+                  : 'bg-black text-white cursor-pointer hover:bg-zinc-800 hover:shadow hover:-translate-y-0.5'
+              }`}>
                 <Upload className="w-4 h-4" />
-                Upload Students
+                Upload Submission
                 <input
                   type="file"
                   ref={fileInputRef}
                   className="hidden"
                   multiple
-                  accept=".txt,.pdf,.md"
+                  accept=".txt,.pdf,.md,.ipynb"
                   onChange={handleFileUpload}
+                  disabled={isProcessing || activeSection?.students?.some(s => s.status === 'grading')}
                 />
               </label>
             ) : isProcessingComplete && activeSection?.students?.length > 0 ? (
               <>
-                <label className="cursor-pointer flex items-center gap-2 bg-white border border-zinc-200 text-zinc-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-zinc-50 transition-all">
+                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  isProcessing || activeSection?.students?.some(s => s.status === 'grading')
+                    ? 'bg-zinc-100 border border-zinc-200 text-zinc-400 cursor-not-allowed'
+                    : 'bg-white border border-zinc-200 text-zinc-700 cursor-pointer hover:bg-black hover:text-white hover:border-black'
+                }`}>
                   <Upload className="w-4 h-4" />
-                  Add More
-                  <input type="file" ref={fileInputRef} className="hidden" multiple accept=".txt,.pdf,.md" onChange={handleFileUpload} />
+                  Upload Submission
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    multiple 
+                    accept=".txt,.pdf,.md,.ipynb" 
+                    onChange={handleFileUpload}
+                    disabled={isProcessing || activeSection?.students?.some(s => s.status === 'grading')}
+                  />
                 </label>
 
                 {!isProcessing && activeSection?.students?.some(s => s.status === 'pending') && (
                   <button
                     onClick={runEvaluation}
-                    className="flex items-center gap-2 bg-zinc-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-zinc-800 transition-all shadow-sm hover:shadow hover:-translate-y-0.5"
+                    className="flex items-center gap-2 bg-white border border-zinc-200 text-zinc-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-black hover:text-white hover:border-black transition-all"
                   >
                     <Brain className="w-4 h-4" />
-                    Evaluate Section
+                    Start Evaluation
                   </button>
                 )}
-                {activeSection?.students?.length > 0 && activeSection?.students?.every(s => s.status === 'completed') && (
+                {activeSection?.students?.length > 0 && (
                   <button
-                    onClick={exportCsv}
-                    className="flex items-center gap-2 bg-zinc-100 text-zinc-900 px-4 py-2 rounded-lg text-sm font-medium hover:bg-zinc-200 transition-all"
+                    onClick={exportExcel}
+                    className="flex items-center gap-2 bg-zinc-100 text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-zinc-200 transition-all"
                   >
                     <Download className="w-4 h-4" />
-                    Export CSV
+                    Export Excel
                   </button>
                 )}
               </>
@@ -709,11 +753,11 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             <div className="h-full flex flex-col">
               <div className="bg-white rounded-xl border border-zinc-200 p-8 shadow-sm mb-6">
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="bg-zinc-900 p-2 rounded-lg">
+                  <div className="bg-black p-2 rounded-lg">
                     <Loader2 className="w-5 h-5 text-white animate-spin" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-lg text-zinc-900">Processing Assignment</h3>
+                    <h3 className="font-bold text-lg text-black">Processing Assignment</h3>
                     <p className="text-sm text-zinc-500">Please wait while we analyze your documents...</p>
                   </div>
                 </div>
@@ -725,12 +769,11 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                         <FileText className="w-5 h-5 text-zinc-400" />
                         <span className="font-medium">Assignment PDF</span>
                       </div>
-                      <span className={`text-sm font-mono px-2 py-1 rounded ${
-                        processingStatus.assignmentProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
+                      <span className={`text-sm font-mono px-2 py-1 rounded ${processingStatus.assignmentProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
                         processingStatus.assignmentProcessingStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
-                        processingStatus.assignmentProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
-                        'bg-zinc-100 text-zinc-500'
-                      }`}>
+                          processingStatus.assignmentProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                            'bg-zinc-100 text-zinc-500'
+                        }`}>
                         {processingStatus.assignmentProcessingStatus}
                       </span>
                     </div>
@@ -745,13 +788,12 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                         <FileText className="w-5 h-5 text-zinc-400" />
                         <span className="font-medium">Rubric</span>
                       </div>
-                      <span className={`text-sm font-mono px-2 py-1 rounded ${
-                        processingStatus.rubricProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
+                      <span className={`text-sm font-mono px-2 py-1 rounded ${processingStatus.rubricProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
                         processingStatus.rubricProcessingStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
-                        processingStatus.rubricProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
-                        processingStatus.rubricProcessingStatus === 'not_applicable' ? 'bg-zinc-100 text-zinc-400' :
-                        'bg-zinc-100 text-zinc-500'
-                      }`}>
+                          processingStatus.rubricProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                            processingStatus.rubricProcessingStatus === 'not_applicable' ? 'bg-zinc-100 text-zinc-400' :
+                              'bg-zinc-100 text-zinc-500'
+                        }`}>
                         {processingStatus.rubricProcessingStatus}
                       </span>
                     </div>
@@ -766,13 +808,12 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                         <FileText className="w-5 h-5 text-zinc-400" />
                         <span className="font-medium">Solution</span>
                       </div>
-                      <span className={`text-sm font-mono px-2 py-1 rounded ${
-                        processingStatus.solutionProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
+                      <span className={`text-sm font-mono px-2 py-1 rounded ${processingStatus.solutionProcessingStatus === 'completed' ? 'bg-green-100 text-green-700' :
                         processingStatus.solutionProcessingStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
-                        processingStatus.solutionProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
-                        processingStatus.solutionProcessingStatus === 'not_applicable' ? 'bg-zinc-100 text-zinc-400' :
-                        'bg-zinc-100 text-zinc-500'
-                      }`}>
+                          processingStatus.solutionProcessingStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                            processingStatus.solutionProcessingStatus === 'not_applicable' ? 'bg-zinc-100 text-zinc-400' :
+                              'bg-zinc-100 text-zinc-500'
+                        }`}>
                         {processingStatus.solutionProcessingStatus}
                       </span>
                     </div>
@@ -788,30 +829,29 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
           {/* Show processed data viewer when complete */}
           {isProcessingComplete && showProcessedData && (
             <div className="h-full flex flex-col">
-              <div className="bg-white rounded-xl border border-zinc-200 shadow-sm flex-1 overflow-hidden">
-                <div className="p-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/30">
-                  <h3 className="font-semibold text-sm text-zinc-900">Processed Data Structure</h3>
+              <div className="bg-white rounded-xl border-2 border-zinc-900 shadow-lg flex-1 overflow-hidden">
+                <div className="p-5 border-b-2 border-zinc-900 bg-zinc-900 flex justify-between items-center">
+                  <h3 className="font-bold text-base text-white">Assignment Data</h3>
                   <button
                     onClick={() => setShowProcessedData(false)}
-                    className="text-xs text-zinc-500 hover:text-zinc-900"
+                    className="text-zinc-300 hover:text-white transition-colors"
                   >
-                    Close
+                    <X className="w-5 h-5" />
                   </button>
                 </div>
                 <div className="p-6 overflow-y-auto h-full">
                   <div className="space-y-3">
                     {/* Assignment Structure Accordion */}
                     {processingStatus?.processedData && (
-                      <div className="border border-zinc-200 rounded-lg overflow-hidden">
+                      <div className="border-2 border-zinc-200 rounded-lg overflow-hidden hover:border-zinc-300 transition-colors">
                         <button
                           onClick={() => setActiveDataSection(activeDataSection === 'assignment' ? null : 'assignment')}
-                          className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${
-                            activeDataSection === 'assignment' ? 'bg-zinc-100' : 'bg-zinc-50 hover:bg-zinc-100'
-                          }`}
+                          className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${activeDataSection === 'assignment' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100'
+                            }`}
                         >
-                          <h4 className="text-xs font-bold text-zinc-600 uppercase tracking-wider">Assignment Structure</h4>
+                          <h4 className={`text-xs font-bold uppercase tracking-wider ${activeDataSection === 'assignment' ? 'text-white' : 'text-zinc-600'}`}>Assignment Structure</h4>
                           <svg
-                            className={`w-4 h-4 text-zinc-400 transition-transform ${activeDataSection === 'assignment' ? 'rotate-180' : ''}`}
+                            className={`w-4 h-4 text-zinc-400 transition-transform ${activeDataSection === 'assignment' ? 'rotate-180 text-white' : ''}`}
                             fill="none"
                             viewBox="0 0 24 24"
                             stroke="currentColor"
@@ -820,7 +860,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                           </svg>
                         </button>
                         {activeDataSection === 'assignment' && (
-                          <div className="p-4 border-t border-zinc-200">
+                          <div className="p-4 border-t-2 border-zinc-200">
                             <pre className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-xs font-mono text-zinc-700 overflow-x-auto max-h-96">
                               {JSON.stringify(processingStatus.processedData, null, 2)}
                             </pre>
@@ -831,16 +871,15 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
 
                     {/* Rubric Criteria Accordion */}
                     {processingStatus?.processedRubric && (
-                      <div className="border border-zinc-200 rounded-lg overflow-hidden">
+                      <div className="border-2 border-zinc-200 rounded-lg overflow-hidden hover:border-zinc-300 transition-colors">
                         <button
                           onClick={() => setActiveDataSection(activeDataSection === 'rubric' ? null : 'rubric')}
-                          className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${
-                            activeDataSection === 'rubric' ? 'bg-zinc-100' : 'bg-zinc-50 hover:bg-zinc-100'
-                          }`}
+                          className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${activeDataSection === 'rubric' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100'
+                            }`}
                         >
-                          <h4 className="text-xs font-bold text-zinc-600 uppercase tracking-wider">Rubric Criteria</h4>
+                          <h4 className={`text-xs font-bold uppercase tracking-wider ${activeDataSection === 'rubric' ? 'text-white' : 'text-zinc-600'}`}>Rubric Criteria</h4>
                           <svg
-                            className={`w-4 h-4 text-zinc-400 transition-transform ${activeDataSection === 'rubric' ? 'rotate-180' : ''}`}
+                            className={`w-4 h-4 text-zinc-400 transition-transform ${activeDataSection === 'rubric' ? 'rotate-180 text-white' : ''}`}
                             fill="none"
                             viewBox="0 0 24 24"
                             stroke="currentColor"
@@ -849,7 +888,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                           </svg>
                         </button>
                         {activeDataSection === 'rubric' && (
-                          <div className="p-4 border-t border-zinc-200">
+                          <div className="p-4 border-t-2 border-zinc-200">
                             <pre className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-xs font-mono text-zinc-700 overflow-x-auto max-h-96">
                               {JSON.stringify(processingStatus.processedRubric, null, 2)}
                             </pre>
@@ -860,16 +899,15 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
 
                     {/* Solution Key Accordion */}
                     {processingStatus?.processedSolution && (
-                      <div className="border border-zinc-200 rounded-lg overflow-hidden">
+                      <div className="border-2 border-zinc-200 rounded-lg overflow-hidden hover:border-zinc-300 transition-colors">
                         <button
                           onClick={() => setActiveDataSection(activeDataSection === 'solution' ? null : 'solution')}
-                          className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${
-                            activeDataSection === 'solution' ? 'bg-zinc-100' : 'bg-zinc-50 hover:bg-zinc-100'
-                          }`}
+                          className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${activeDataSection === 'solution' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100'
+                            }`}
                         >
-                          <h4 className="text-xs font-bold text-zinc-600 uppercase tracking-wider">Solution Key</h4>
+                          <h4 className={`text-xs font-bold uppercase tracking-wider ${activeDataSection === 'solution' ? 'text-white' : 'text-zinc-600'}`}>Solution Key</h4>
                           <svg
-                            className={`w-4 h-4 text-zinc-400 transition-transform ${activeDataSection === 'solution' ? 'rotate-180' : ''}`}
+                            className={`w-4 h-4 text-zinc-400 transition-transform ${activeDataSection === 'solution' ? 'rotate-180 text-white' : ''}`}
                             fill="none"
                             viewBox="0 0 24 24"
                             stroke="currentColor"
@@ -878,7 +916,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                           </svg>
                         </button>
                         {activeDataSection === 'solution' && (
-                          <div className="p-4 border-t border-zinc-200">
+                          <div className="p-4 border-t-2 border-zinc-200">
                             <pre className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-xs font-mono text-zinc-700 overflow-x-auto max-h-96">
                               {JSON.stringify(processingStatus.processedSolution, null, 2)}
                             </pre>
@@ -907,9 +945,21 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                 >
                   <FileText className="w-4 h-4" /> View Processed Data
                 </button>
-                <label className="cursor-pointer flex items-center gap-2 bg-zinc-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-zinc-800">
-                  <Upload className="w-4 h-4" /> Upload Students
-                  <input type="file" ref={fileInputRef} className="hidden" multiple accept=".txt,.pdf,.md" onChange={handleFileUpload} />
+                <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${
+                  isProcessing || activeSection?.students?.some(s => s.status === 'grading')
+                    ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+                    : 'bg-zinc-900 text-white cursor-pointer hover:bg-zinc-800'
+                }`}>
+                  <Upload className="w-4 h-4" /> Upload Submission
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    multiple 
+                    accept=".txt,.pdf,.md" 
+                    onChange={handleFileUpload}
+                    disabled={isProcessing || activeSection?.students?.some(s => s.status === 'grading')}
+                  />
                 </label>
               </div>
             </div>
@@ -942,7 +992,9 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                           onClick={() => setSelectedStudent(student)}
                           className={`cursor-pointer transition-colors ${selectedStudent?.id === student.id ? 'bg-zinc-50' : 'hover:bg-zinc-50'}`}
                         >
-                          <td className="px-4 md:px-6 py-4 font-medium text-zinc-900">{student.name}</td>
+                          <td className="px-4 md:px-6 py-4 font-medium text-zinc-900">
+                            {student.name.length > 50 ? `${student.name.substring(0, 50)}...` : student.name}
+                          </td>
                           <td className="px-4 md:px-6 py-4">
                             {student.status === 'pending' && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-400"><div className="w-1.5 h-1.5 rounded-full bg-zinc-300" /> Pending</span>}
                             {student.status === 'grading' && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600"><Loader2 className="w-3 h-3 animate-spin" /> Evaluating</span>}
@@ -972,7 +1024,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                 {stats && !selectedStudent && (
                   <div className="bg-white rounded-xl border border-zinc-200 p-8 shadow-sm flex-shrink-0 animate-in fade-in">
                     <h3 className="font-semibold text-sm text-zinc-900 mb-6 flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4" /> Section Statistics
+                      <PieChart className="w-4 h-4" /> Section Statistics
                     </h3>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                       <div className="p-4 bg-zinc-50 rounded-lg border border-zinc-100 flex flex-col">
@@ -987,13 +1039,13 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                         <div className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mb-2">Std Dev</div>
                         <div className="text-3xl font-bold text-zinc-900 mt-auto">{stats.stdDev}</div>
                       </div>
-                      <div className="p-4 bg-green-50 rounded-lg border border-green-100 flex flex-col">
-                        <div className="text-green-600 text-[10px] font-bold uppercase tracking-widest mb-2">Highest</div>
-                        <div className="text-3xl font-bold text-green-700 mt-auto">{stats.high}</div>
+                      <div className="p-4 bg-zinc-50 rounded-lg border border-zinc-100 flex flex-col">
+                        <div className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mb-2">Highest</div>
+                        <div className="text-3xl font-bold text-zinc-900 mt-auto">{stats.high}</div>
                       </div>
-                      <div className="p-4 bg-red-50 rounded-lg border border-red-100 flex flex-col">
-                        <div className="text-red-600 text-[10px] font-bold uppercase tracking-widest mb-2">Lowest</div>
-                        <div className="text-3xl font-bold text-red-700 mt-auto">{stats.low}</div>
+                      <div className="p-4 bg-zinc-50 rounded-lg border border-zinc-100 flex flex-col">
+                        <div className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mb-2">Lowest</div>
+                        <div className="text-3xl font-bold text-zinc-900 mt-auto">{stats.low}</div>
                       </div>
                       <div className="p-4 bg-zinc-50 rounded-lg border border-zinc-100 flex flex-col">
                         <div className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mb-2">Count</div>
@@ -1078,13 +1130,6 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                               </div>
                             </div>
                           )}
-
-                          <div className="pt-8 border-t border-zinc-100">
-                            <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Submission Excerpt</h4>
-                            <div className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-xs font-mono text-zinc-500 max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-                              {selectedStudent.content.substring(0, 500)}...
-                            </div>
-                          </div>
                         </div>
                       </>
                     ) : (
@@ -1094,7 +1139,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                         <p className="font-medium text-zinc-900">
                           {selectedStudent.status === 'pending' ? 'Evaluation pending' : 'Analyzing submission...'}
                         </p>
-                        {selectedStudent.status === 'pending' && <p className="text-sm mt-2">Select "Evaluate Section" to process this student.</p>}
+                        {selectedStudent.status === 'pending' && <p className="text-sm mt-2">Select "Start Evaluation" to process this student.</p>}
                       </div>
                     )}
                   </div>

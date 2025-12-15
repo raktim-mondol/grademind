@@ -20,8 +20,8 @@ const isAuthEnabled = () => {
 const getUserId = (req) => {
   // If auth is disabled (development mode), return a default user ID
   if (!isAuthEnabled()) {
-    console.log('⚠️  Auth disabled - using default user ID');
-    return 'dev-user-123'; // Default user ID for development
+    // Return the mock user ID from req.user if set, otherwise use dev default
+    return req.user?.id || req.auth?.userId || '000000000000000000000001'; // Valid MongoDB ObjectId for development
   }
 
   // In production with auth enabled, get from Clerk

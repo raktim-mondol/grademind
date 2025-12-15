@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronRight, ChevronLeft, Upload, FileText, X, Paperclip, CheckCircle, LayoutGrid, Cpu, Zap, Sparkles, ToggleLeft, ToggleRight } from './Icons';
+import { ChevronRight, ChevronLeft, Upload, FileText, X, CheckCircle, Cpu, Zap, Sparkles, ToggleLeft, ToggleRight, LayoutGrid } from './Icons';
 
 const SetupForm = ({ onComplete, onCancel }) => {
   const [step, setStep] = useState(1);
@@ -73,9 +73,9 @@ const SetupForm = ({ onComplete, onCancel }) => {
 
   const isStepValid = () => {
     if (step === 1) return config.title.trim().length > 0 && config.description.trim().length > 0;
-    if (step === 2) return !!config.assignmentFile || config.assignmentText.trim().length > 0; // Either PDF or text required
-    if (step === 3) return true; // Rubric is optional
-    if (step === 4) return true; // Solution is optional
+    if (step === 2) return !!config.assignmentFile || config.assignmentText.trim().length > 0;
+    if (step === 3) return true;
+    if (step === 4) return true;
     if (step === 5) return config.selectedModels.length > 0;
     return true;
   };
@@ -84,277 +84,383 @@ const SetupForm = ({ onComplete, onCancel }) => {
     {
       id: 'gemini-2.5-pro',
       name: 'Gemini 2.5 Pro',
-      desc: 'Most capable model. Best for complex grading and detailed feedback.',
-      icon: <Sparkles className="w-4 h-4 text-purple-500" />
+      desc: 'Most capable. Best for complex grading.',
+      icon: <Sparkles className="w-3 h-3 text-purple-500" />
     },
     {
       id: 'gemini-2.5-flash',
       name: 'Gemini 2.5 Flash',
-      desc: 'Fast, efficient, and balanced. Best for standard essays.',
-      icon: <Zap className="w-4 h-4 text-yellow-500" />
+      desc: 'Fast and balanced. Best for essays.',
+      icon: <Zap className="w-3 h-3 text-yellow-500" />
     },
     {
       id: 'gemini-flash-lite-latest',
       name: 'Gemini Flash Lite',
-      desc: 'Lightweight and rapid. Best for simple checks.',
-      icon: <Cpu className="w-4 h-4 text-blue-500" />
+      desc: 'Lightweight. Best for simple checks.',
+      icon: <Cpu className="w-3 h-3 text-blue-500" />
     }
   ];
 
-  const PDFUploader = ({ field, currentFile, label, required = false }) => (
-    <div className="mt-4">
-      <div className="flex items-center justify-between mb-2">
-        <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-          {label} {required && <span className="text-red-500">*</span>}
-        </label>
-      </div>
-      {currentFile ? (
-        <div className="flex items-center justify-between p-4 bg-zinc-50 border border-zinc-200 rounded-lg">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-zinc-200 rounded flex items-center justify-center">
-              <FileText className="w-4 h-4 text-zinc-600" />
-            </div>
-            <span className="text-sm font-medium text-zinc-900">{currentFile.name}</span>
-          </div>
-          <button onClick={() => removeFile(field)} className="p-2 hover:bg-zinc-200 rounded-full text-zinc-500 transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      ) : (
-        <label className="cursor-pointer group flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-zinc-200 rounded-lg hover:bg-zinc-50 hover:border-zinc-300 transition-all">
-          <div className="flex flex-col items-center gap-2 text-zinc-400 group-hover:text-zinc-600">
-            <Upload className="w-6 h-6" />
-            <span className="text-sm font-medium">Upload PDF File</span>
-            <span className="text-xs text-zinc-400">Click or drag and drop</span>
-          </div>
-          <input type="file" className="hidden" accept=".pdf" onChange={(e) => handleFileChange(field, e)} />
-        </label>
-      )}
-    </div>
-  );
+  const PDFUploader = ({ field, currentFile, label, required = false }) => {
+    const [isDragging, setIsDragging] = useState(false);
 
-  const FileUploader = ({ field, currentFile, label }) => (
-    <div className="mt-4">
-      <div className="flex items-center justify-between mb-2">
-        <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">{label} (PDF/Text)</label>
-      </div>
-      {currentFile ? (
-        <div className="flex items-center justify-between p-4 bg-zinc-50 border border-zinc-200 rounded-lg">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-zinc-200 rounded flex items-center justify-center">
-              <FileText className="w-4 h-4 text-zinc-600" />
-            </div>
-            <span className="text-sm font-medium text-zinc-900">{currentFile.name}</span>
-          </div>
-          <button onClick={() => removeFile(field)} className="p-2 hover:bg-zinc-200 rounded-full text-zinc-500 transition-colors">
-            <X className="w-4 h-4" />
-          </button>
+    const handleDragOver = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(true);
+    };
+
+    const handleDragLeave = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+    };
+
+    const handleDrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+          handleFileChange(field, { target: { files: [file] } });
+        }
+      }
+    };
+
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+            {label} {required && <span className="text-red-500">*</span>}
+          </label>
         </div>
-      ) : (
-        <label className="cursor-pointer group flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-zinc-200 rounded-lg hover:bg-zinc-50 hover:border-zinc-300 transition-all">
-          <div className="flex items-center gap-2 text-zinc-400 group-hover:text-zinc-600">
-            <Upload className="w-4 h-4" />
-            <span className="text-sm font-medium">Upload PDF or Text File</span>
+        {currentFile ? (
+          <div className="flex items-center justify-between p-2.5 bg-zinc-50 border border-zinc-200 rounded-lg">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 bg-zinc-200 rounded flex items-center justify-center">
+                <FileText className="w-3 h-3 text-zinc-600" />
+              </div>
+              <span className="text-sm font-medium text-zinc-900">{currentFile.name}</span>
+            </div>
+            <button onClick={() => removeFile(field)} className="p-1.5 hover:bg-zinc-200 rounded-full text-zinc-500 transition-colors">
+              <X className="w-3 h-3" />
+            </button>
           </div>
-          <input type="file" className="hidden" accept=".pdf,.txt" onChange={(e) => handleFileChange(field, e)} />
-        </label>
-      )}
-    </div>
-  );
+        ) : (
+          <label
+            className={`cursor-pointer group flex flex-col items-center justify-center w-full flex-1 border-2 border-dashed rounded-lg transition-all ${
+              isDragging
+                ? 'bg-zinc-100 border-zinc-900 border-solid'
+                : 'border-zinc-200 hover:bg-zinc-50 hover:border-zinc-300'
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <div className={`flex flex-col items-center gap-2 transition-colors ${
+              isDragging ? 'text-zinc-900' : 'text-zinc-400 group-hover:text-zinc-600'
+            }`}>
+              <Upload className={`w-6 h-6 ${isDragging ? 'animate-bounce' : ''}`} />
+              <span className="text-base font-medium">Drag & drop PDF here</span>
+              <span className="text-sm text-zinc-400">or click to browse</span>
+            </div>
+            <input type="file" className="hidden" accept=".pdf" onChange={(e) => handleFileChange(field, e)} />
+          </label>
+        )}
+      </div>
+    );
+  };
+
+  const FileUploader = ({ field, currentFile, label }) => {
+    const [isDragging, setIsDragging] = useState(false);
+
+    const handleDragOver = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(true);
+    };
+
+    const handleDragLeave = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+    };
+
+    const handleDrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (file.type === 'application/pdf' || file.name.endsWith('.pdf') || file.name.endsWith('.txt')) {
+          handleFileChange(field, { target: { files: [file] } });
+        }
+      }
+    };
+
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">{label}</label>
+        </div>
+        {currentFile ? (
+          <div className="flex items-center justify-between p-2.5 bg-zinc-50 border border-zinc-200 rounded-lg">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 bg-zinc-200 rounded flex items-center justify-center">
+                <FileText className="w-3 h-3 text-zinc-600" />
+              </div>
+              <span className="text-sm font-medium text-zinc-900">{currentFile.name}</span>
+            </div>
+            <button onClick={() => removeFile(field)} className="p-1.5 hover:bg-zinc-200 rounded-full text-zinc-500 transition-colors">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ) : (
+          <label
+            className={`cursor-pointer group flex flex-col items-center justify-center w-full flex-1 border-2 border-dashed rounded-lg transition-all ${
+              isDragging
+                ? 'bg-zinc-100 border-zinc-900 border-solid'
+                : 'border-zinc-200 hover:bg-zinc-50 hover:border-zinc-300'
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <div className={`flex flex-col items-center gap-2 transition-colors ${
+              isDragging ? 'text-zinc-900' : 'text-zinc-400 group-hover:text-zinc-600'
+            }`}>
+              <Upload className={`w-6 h-6 ${isDragging ? 'animate-bounce' : ''}`} />
+              <span className="text-base font-medium">Drag & drop file here</span>
+              <span className="text-sm text-zinc-400">or click to browse</span>
+            </div>
+            <input type="file" className="hidden" accept=".pdf,.txt" onChange={(e) => handleFileChange(field, e)} />
+          </label>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
-      <div className="max-w-4xl mx-auto w-full py-12 px-6 flex-1 flex flex-col">
-        <div className="mb-12 flex items-center justify-between">
-          <div>
-            <button onClick={onCancel} className="text-xs font-mono text-zinc-400 hover:text-black mb-4 flex items-center gap-1">
-              <ChevronLeft className="w-3 h-3" /> Back to Workspaces
-            </button>
-            <h2 className="text-3xl font-bold tracking-tight mb-2">New Assignment</h2>
+    <div className="w-full h-full flex flex-col">
+      <div className="w-full py-5 px-6 flex flex-col h-full">
+        <div className="flex-shrink-0 mb-4">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="text-zinc-500 text-sm">Step {step} of 6</p>
+            </div>
           </div>
-          <div className="hidden md:flex items-center space-x-2 text-sm font-mono">
-            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 1 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>01 Details</span>
-            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 2 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>02 Assignment</span>
-            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 3 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>03 Rubric</span>
-            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 4 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>04 Solution</span>
-            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 5 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>05 AI Config</span>
-            <span className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${step === 6 ? 'bg-black text-white' : 'text-zinc-400 bg-zinc-100'}`}>06 Review</span>
+          {/* Progress Bar */}
+          <div className="relative mb-6">
+            <div className="flex items-center justify-between mb-2 relative z-10">
+              {[
+                { num: 1, label: 'Details' },
+                { num: 2, label: 'Content' },
+                { num: 3, label: 'Rubric' },
+                { num: 4, label: 'Solution' },
+                { num: 5, label: 'Grading' },
+                { num: 6, label: 'Review' }
+              ].map((s) => (
+                <div key={s.num} className="flex flex-col items-center gap-1.5 flex-1">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all duration-300 ${step === s.num ? 'bg-zinc-900 text-white shadow-md scale-110' :
+                    step > s.num ? 'bg-zinc-900 text-white' :
+                      'bg-zinc-100 text-zinc-400'
+                    }`}>
+                    {step > s.num ? <CheckCircle className="w-3.5 h-3.5" /> : s.num}
+                  </div>
+                  <span className={`text-xs font-semibold uppercase tracking-wider transition-colors duration-300 ${step >= s.num ? 'text-zinc-900' : 'text-zinc-400'
+                    }`}>
+                    {s.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="absolute top-3.5 left-[8.33%] right-[8.33%] h-0.5 bg-zinc-100 -z-0">
+              <div
+                className="h-full bg-zinc-900 transition-all duration-500 ease-out"
+                style={{ width: `${((step - 1) / 5) * 100}%` }}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="space-y-8 flex-1">
-          {/* Step 1: Details - Title and Description only (no PDF, no marks) */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          {/* Step 1: Details */}
           {step === 1 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+            <div className="space-y-4 animate-in fade-in duration-300 h-full flex flex-col">
               <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Assignment Title <span className="text-red-500">*</span></label>
+                <label className="text-sm font-semibold text-zinc-700">Assignment Title <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={config.title}
                   onChange={(e) => handleChange('title', e.target.value)}
-                  className="w-full bg-white border border-zinc-200 rounded-lg p-4 text-xl font-medium focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all placeholder:text-zinc-300"
+                  className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-900/10 focus:border-zinc-900 transition-all placeholder:text-zinc-300"
                   placeholder="e.g. Midterm Essay: The Great Gatsby"
                   autoFocus
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Instructions / Context <span className="text-red-500">*</span></label>
+              <div className="space-y-2 flex-1 flex flex-col min-h-0">
+                <label className="text-sm font-semibold text-zinc-700">Instructions <span className="text-red-500">*</span></label>
                 <textarea
                   value={config.description}
                   onChange={(e) => handleChange('description', e.target.value)}
-                  className="w-full h-48 bg-white border border-zinc-200 rounded-lg p-4 text-base focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all resize-none placeholder:text-zinc-300"
-                  placeholder="Provide context or instructions for the AI grader about this assignment."
+                  className="w-full flex-1 bg-white border border-zinc-200 rounded-lg p-3 text-base focus:outline-none focus:ring-2 focus:ring-zinc-900/10 focus:border-zinc-900 transition-all resize-none placeholder:text-zinc-300 leading-relaxed overflow-y-auto min-h-[200px]"
+                  placeholder="Provide context for the AI grader..."
                 />
               </div>
             </div>
           )}
 
-          {/* Step 2: Assignment Content (PDF or Text) */}
+          {/* Step 2: Assignment Content */}
           {step === 2 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
-              <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Assignment Questions <span className="text-red-500">*</span></label>
-                <p className="text-sm text-zinc-500">Provide the assignment questions either as text or by uploading a PDF.</p>
+            <div className="space-y-3 animate-in fade-in duration-300 h-full flex flex-col">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Questions <span className="text-red-500">*</span></label>
               </div>
-              <textarea
-                value={config.assignmentText}
-                onChange={(e) => handleChange('assignmentText', e.target.value)}
-                className="w-full h-48 bg-zinc-50 border border-zinc-200 rounded-lg p-6 text-sm font-mono text-zinc-800 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all resize-none placeholder:text-zinc-400"
-                placeholder={`Question 1 (20 points): Analyze the symbolism of the green light in The Great Gatsby.\n\nQuestion 2 (30 points): Compare and contrast the characters of Tom and Gatsby.\n\nQuestion 3 (50 points): Write an essay discussing the theme of the American Dream.`}
-                autoFocus
-              />
-              <div className="relative flex items-center py-2">
-                <div className="flex-grow border-t border-zinc-100"></div>
-                <span className="flex-shrink-0 mx-4 text-xs text-zinc-400 font-mono uppercase">OR</span>
-                <div className="flex-grow border-t border-zinc-100"></div>
+              <div className="flex flex-col gap-3 flex-1 min-h-0">
+                <div className="flex-[0.2] flex flex-col min-h-0">
+                  <textarea
+                    value={config.assignmentText}
+                    onChange={(e) => handleChange('assignmentText', e.target.value)}
+                    className="w-full h-full bg-white border border-zinc-200 rounded-lg p-3 text-base focus:outline-none focus:ring-2 focus:ring-zinc-900/10 focus:border-zinc-900 transition-all resize-none placeholder:text-zinc-300 overflow-y-auto"
+                    placeholder="Write the questions"
+                    autoFocus
+                  />
+                </div>
+                <div className="relative flex items-center justify-center py-1">
+                  <div className="w-20 border-t border-zinc-100"></div>
+                  <span className="flex-shrink-0 mx-3 text-xs text-zinc-400 font-mono">OR</span>
+                  <div className="w-20 border-t border-zinc-100"></div>
+                </div>
+                <div className="flex-[0.8] flex flex-col min-h-[200px]">
+                  <PDFUploader field="assignmentFile" currentFile={config.assignmentFile} label="Assignment PDF" />
+                </div>
               </div>
-              <PDFUploader
-                field="assignmentFile"
-                currentFile={config.assignmentFile}
-                label="Assignment PDF"
-                required={false}
-              />
             </div>
           )}
 
-          {/* Step 3: Rubric (optional) with Total Marks */}
+          {/* Step 3: Rubric */}
           {step === 3 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+            <div className="space-y-3 animate-in fade-in duration-300 h-full flex flex-col">
               <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Grading Rubric</label>
-                  <p className="text-sm text-zinc-500">Define the criteria the AI should use to evaluate submissions.</p>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Rubric</label>
+                  <span className="text-xs bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded font-mono">Optional</span>
                 </div>
-                <span className="text-xs bg-zinc-100 text-zinc-500 px-2 py-1 rounded font-mono">Optional</span>
+                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Total Points</label>
               </div>
 
-              <div className="flex items-center gap-4">
-                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Total Points</label>
+              <div className="flex items-center justify-end gap-3">
                 <input
                   type="number"
                   value={config.totalScore}
                   onChange={(e) => handleChange('totalScore', parseInt(e.target.value) || 0)}
-                  className="w-32 bg-white border border-zinc-200 rounded-lg p-3 text-base font-medium focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all"
+                  className="w-24 bg-white border border-zinc-200 rounded-md p-2 text-base font-medium focus:outline-none focus:ring-2 focus:ring-black transition-all"
                   min="1"
                 />
               </div>
 
-              <textarea
-                value={config.rubric}
-                onChange={(e) => handleChange('rubric', e.target.value)}
-                className="w-full h-48 bg-zinc-50 border border-zinc-200 rounded-lg p-6 text-sm font-mono text-zinc-800 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all resize-none placeholder:text-zinc-400"
-                placeholder={`1. Thesis (20pts): Clear, arguable thesis statement.\n2. Evidence (30pts): Uses citations effectively.\n3. Analysis (30pts): Explains significance of evidence.`}
-                autoFocus
-              />
-              <div className="relative flex items-center py-2">
-                <div className="flex-grow border-t border-zinc-100"></div>
-                <span className="flex-shrink-0 mx-4 text-xs text-zinc-400 font-mono uppercase">OR</span>
-                <div className="flex-grow border-t border-zinc-100"></div>
+              <div className="flex flex-col gap-3 flex-1 min-h-0">
+                <div className="flex-[0.2] flex flex-col min-h-0">
+                  <textarea
+                    value={config.rubric}
+                    onChange={(e) => handleChange('rubric', e.target.value)}
+                    className="w-full h-full bg-white border border-zinc-200 rounded-lg p-3 text-base focus:outline-none focus:ring-2 focus:ring-zinc-900/10 focus:border-zinc-900 transition-all resize-none placeholder:text-zinc-300 overflow-y-auto"
+                    placeholder="Write your evaluation criterion"
+                    autoFocus
+                  />
+                </div>
+                <div className="relative flex items-center justify-center py-1">
+                  <div className="w-20 border-t border-zinc-100"></div>
+                  <span className="flex-shrink-0 mx-3 text-xs text-zinc-400 font-mono">OR</span>
+                  <div className="w-20 border-t border-zinc-100"></div>
+                </div>
+                <div className="flex-[0.8] flex flex-col min-h-[200px]">
+                  <FileUploader field="rubricFile" currentFile={config.rubricFile} label="Upload Rubric" />
+                </div>
               </div>
-              <FileUploader field="rubricFile" currentFile={config.rubricFile} label="Upload Rubric" />
             </div>
           )}
 
-          {/* Step 4: Solution (optional) */}
+          {/* Step 4: Solution */}
           {step === 4 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+            <div className="space-y-3 animate-in fade-in duration-300 h-full flex flex-col">
               <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Reference Solution / Key</label>
-                  <p className="text-sm text-zinc-500">Provide a model answer or key to ground the AI's evaluation.</p>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Solution</label>
+                  <span className="text-xs bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded font-mono">Optional</span>
                 </div>
-                <span className="text-xs bg-zinc-100 text-zinc-500 px-2 py-1 rounded font-mono">Optional</span>
               </div>
-              <textarea
-                value={config.solution}
-                onChange={(e) => handleChange('solution', e.target.value)}
-                className="w-full h-64 bg-zinc-50 border border-zinc-200 rounded-lg p-6 text-sm font-mono text-zinc-800 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all resize-none placeholder:text-zinc-400"
-                placeholder="Paste the correct answer, code solution, or an exemplary essay here..."
-                autoFocus
-              />
-              <div className="relative flex items-center py-2">
-                <div className="flex-grow border-t border-zinc-100"></div>
-                <span className="flex-shrink-0 mx-4 text-xs text-zinc-400 font-mono uppercase">OR</span>
-                <div className="flex-grow border-t border-zinc-100"></div>
+              <div className="flex flex-col gap-3 flex-1 min-h-0">
+                <div className="flex-[0.2] flex flex-col min-h-0">
+                  <textarea
+                    value={config.solution}
+                    onChange={(e) => handleChange('solution', e.target.value)}
+                    className="w-full h-full bg-white border border-zinc-200 rounded-lg p-3 text-base focus:outline-none focus:ring-2 focus:ring-zinc-900/10 focus:border-zinc-900 transition-all resize-none placeholder:text-zinc-300 overflow-y-auto"
+                    placeholder="Write the model answer"
+                    autoFocus
+                  />
+                </div>
+                <div className="relative flex items-center justify-center py-1">
+                  <div className="w-20 border-t border-zinc-100"></div>
+                  <span className="flex-shrink-0 mx-3 text-xs text-zinc-400 font-mono">OR</span>
+                  <div className="w-20 border-t border-zinc-100"></div>
+                </div>
+                <div className="flex-[0.8] flex flex-col min-h-[200px]">
+                  <FileUploader field="solutionFile" currentFile={config.solutionFile} label="Upload Solution" />
+                </div>
               </div>
-              <FileUploader field="solutionFile" currentFile={config.solutionFile} label="Upload Solution" />
             </div>
           )}
 
           {/* Step 5: AI Config */}
           {step === 5 && (
-            <div className="space-y-8 animate-in fade-in slide-in-from-right-8 duration-500">
-              <div className="space-y-4">
-                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Select AI Models</label>
-                <p className="text-sm text-zinc-500">Choose one or more models for evaluation.</p>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {availableModels.map((model) => (
-                    <div
-                      key={model.id}
-                      onClick={() => toggleModel(model.id)}
-                      className={`cursor-pointer p-4 rounded-xl border transition-all ${
-                        config.selectedModels.includes(model.id)
-                          ? 'bg-zinc-900 border-zinc-900 text-white shadow-lg'
-                          : 'bg-white border-zinc-200 text-zinc-900 hover:border-zinc-400'
+            <div className="space-y-4 animate-in fade-in duration-300 h-full flex flex-col">
+              <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Select AI Models</label>
+              <div className="grid grid-cols-3 gap-3">
+                {availableModels.map((model) => (
+                  <div
+                    key={model.id}
+                    onClick={() => toggleModel(model.id)}
+                    className={`cursor-pointer p-3 rounded-lg border transition-all duration-300 ${config.selectedModels.includes(model.id)
+                      ? 'bg-gradient-to-br from-zinc-900 to-zinc-800 border-zinc-900 text-white shadow-md'
+                      : 'bg-white border-zinc-200 text-zinc-900 hover:border-zinc-400'
                       }`}
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className={`p-2 rounded-lg ${config.selectedModels.includes(model.id) ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
-                          {model.icon}
-                        </div>
-                        {config.selectedModels.includes(model.id) && <CheckCircle className="w-5 h-5 text-white" />}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className={`p-1.5 rounded-md ${config.selectedModels.includes(model.id) ? 'bg-white' : 'bg-zinc-100'}`}>
+                        {model.icon}
                       </div>
-                      <h3 className={`font-bold text-sm mb-1 ${config.selectedModels.includes(model.id) ? 'text-white' : 'text-zinc-900'}`}>{model.name}</h3>
-                      <p className={`text-xs ${config.selectedModels.includes(model.id) ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                        {model.desc}
-                      </p>
+                      {config.selectedModels.includes(model.id) && <CheckCircle className="w-4 h-4 text-white" />}
                     </div>
-                  ))}
-                </div>
+                    <h3 className={`font-bold text-sm mb-1 ${config.selectedModels.includes(model.id) ? 'text-white' : 'text-zinc-900'}`}>{model.name}</h3>
+                    <p className={`text-xs leading-relaxed ${config.selectedModels.includes(model.id) ? 'text-zinc-300' : 'text-zinc-500'}`}>
+                      {model.desc}
+                    </p>
+                  </div>
+                ))}
               </div>
 
               {config.selectedModels.length > 1 && (
-                <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-6 animate-in fade-in slide-in-from-bottom-2">
+                <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-3">
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Cpu className="w-4 h-4 text-zinc-900" />
-                        <h3 className="font-bold text-zinc-900">Average Grading (Consensus)</h3>
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <Cpu className="w-3 h-3 text-zinc-900" />
+                        <h3 className="font-bold text-sm text-zinc-900">Average Grading</h3>
                       </div>
-                      <p className="text-sm text-zinc-500 max-w-md">
-                        Calculate the final score by averaging results from all selected models.
-                      </p>
+                      <p className="text-xs text-zinc-500">Average results from models</p>
                     </div>
-                    <button
-                      onClick={() => handleChange('useAverageGrading', !config.useAverageGrading)}
-                      className="transition-colors text-zinc-900"
-                    >
+                    <button onClick={() => handleChange('useAverageGrading', !config.useAverageGrading)} className="transition-colors">
                       {config.useAverageGrading ? (
-                        <ToggleRight className="w-10 h-10" />
+                        <ToggleRight className="w-8 h-8 text-zinc-900" />
                       ) : (
-                        <ToggleLeft className="w-10 h-10 text-zinc-300" />
+                        <ToggleLeft className="w-8 h-8 text-zinc-300" />
                       )}
                     </button>
                   </div>
@@ -365,95 +471,59 @@ const SetupForm = ({ onComplete, onCancel }) => {
 
           {/* Step 6: Review */}
           {step === 6 && (
-            <div className="space-y-8 animate-in fade-in slide-in-from-right-8 duration-500">
-              <div className="bg-zinc-50 rounded-xl p-8 border border-zinc-200">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="bg-zinc-900 p-2 rounded-lg">
-                    <LayoutGrid className="w-5 h-5 text-white" />
+            <div className="animate-in fade-in duration-300 h-full flex flex-col overflow-y-auto pr-1">
+              <div className="bg-zinc-50 rounded-lg p-4 border border-zinc-200">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="bg-zinc-900 p-1.5 rounded-md">
+                    <LayoutGrid className="w-3 h-3 text-white" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-lg text-zinc-900">Configuration Summary</h3>
-                    <p className="text-sm text-zinc-500">Review the assignment setup before processing.</p>
+                    <h3 className="font-bold text-base text-zinc-900">Summary</h3>
+                    <p className="text-xs text-zinc-500">Review configuration</p>
                   </div>
                 </div>
 
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">Assignment Title</h4>
-                      <div className="text-lg font-medium text-zinc-900">{config.title}</div>
+                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-1">Title</h4>
+                      <div className="text-base font-medium text-zinc-900 truncate">{config.title}</div>
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">Total Points</h4>
-                      <div className="text-lg font-medium text-zinc-900">{config.totalScore}</div>
+                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-1">Points</h4>
+                      <div className="text-base font-medium text-zinc-900">{config.totalScore}</div>
                     </div>
                   </div>
 
                   <div>
-                    <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">AI Configuration</h4>
-                    <div className="flex flex-wrap gap-2">
+                    <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-1">AI Models</h4>
+                    <div className="flex flex-wrap gap-1.5">
                       {config.selectedModels.map(m => (
-                        <span key={m} className="text-xs bg-white border border-zinc-200 px-2 py-1 rounded text-zinc-600 font-mono">
+                        <span key={m} className="text-xs bg-white border border-zinc-200 px-1.5 py-0.5 rounded text-zinc-600 font-mono">
                           {m}
                         </span>
                       ))}
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="p-4 bg-white border border-zinc-200 rounded-lg">
-                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                        <FileText className="w-3 h-3" /> Instructions
-                      </h4>
-                      <div className="text-sm text-zinc-600 line-clamp-4">{config.description || <span className="text-zinc-400 italic">Not provided</span>}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2.5 bg-white border border-zinc-200 rounded-lg">
+                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-1">Questions</h4>
+                      <div className="flex items-center gap-1.5">
+                        {config.assignmentFile ? <FileText className="w-3 h-3 text-zinc-500" /> : <FileText className="w-3 h-3 text-zinc-500" />}
+                        <span className="text-sm text-zinc-600 truncate">
+                          {config.assignmentFile ? 'PDF Uploaded' : (config.assignmentText ? 'Text Provided' : 'None')}
+                        </span>
+                      </div>
                     </div>
-
-                    <div className="p-4 bg-white border border-zinc-200 rounded-lg">
-                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                        <FileText className="w-3 h-3" /> Assignment Questions
-                      </h4>
-                      {config.assignmentFile ? (
-                        <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-                          <Paperclip className="w-4 h-4 text-zinc-400" />
-                          <span className="truncate">{config.assignmentFile.name}</span>
-                        </div>
-                      ) : config.assignmentText ? (
-                        <div className="text-sm text-zinc-600 font-mono line-clamp-4">{config.assignmentText}</div>
-                      ) : (
-                        <span className="text-zinc-400 italic text-sm">Not provided</span>
-                      )}
-                    </div>
-
-                    <div className="p-4 bg-white border border-zinc-200 rounded-lg">
-                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                        <CheckCircle className="w-3 h-3" /> Rubric
-                      </h4>
-                      {config.rubricFile ? (
-                        <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-                          <Paperclip className="w-4 h-4 text-zinc-400" />
-                          <span className="truncate">{config.rubricFile.name}</span>
-                        </div>
-                      ) : config.rubric ? (
-                        <div className="text-sm text-zinc-600 font-mono line-clamp-4">{config.rubric}</div>
-                      ) : (
-                        <span className="text-zinc-400 italic text-sm">Not provided (will extract from assignment)</span>
-                      )}
-                    </div>
-
-                    <div className="p-4 bg-white border border-zinc-200 rounded-lg">
-                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                        <CheckCircle className="w-3 h-3" /> Solution
-                      </h4>
-                      {config.solutionFile ? (
-                        <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-                          <Paperclip className="w-4 h-4 text-zinc-400" />
-                          <span className="truncate">{config.solutionFile.name}</span>
-                        </div>
-                      ) : config.solution ? (
-                        <div className="text-sm text-zinc-600 font-mono line-clamp-4">{config.solution}</div>
-                      ) : (
-                        <span className="text-zinc-400 italic text-sm">Not provided</span>
-                      )}
+                    <div className="p-2.5 bg-white border border-zinc-200 rounded-lg">
+                      <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-1">Rubric</h4>
+                      <div className="flex items-center gap-1.5">
+                        {config.rubricFile ? <FileText className="w-3 h-3 text-zinc-500" /> : <FileText className="w-3 h-3 text-zinc-500" />}
+                        <span className="text-sm text-zinc-600 truncate">
+                          {config.rubricFile ? 'PDF Uploaded' : (config.rubric ? 'Text Provided' : 'None')}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -462,21 +532,22 @@ const SetupForm = ({ onComplete, onCancel }) => {
           )}
         </div>
 
-        <div className="flex justify-between items-center pt-8 border-t border-zinc-100 mt-8">
-          <button onClick={handleBack} className="text-zinc-500 hover:text-black font-medium px-4 py-2">
+        {/* Footer */}
+        <div className="flex-shrink-0 flex justify-between items-center pt-4 border-t border-zinc-100 mt-3">
+          <button onClick={handleBack} className="flex items-center gap-1.5 px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 group text-xs border bg-white text-zinc-900 border-zinc-200 hover:bg-gradient-to-r hover:from-zinc-900 hover:to-zinc-800 hover:text-white hover:border-zinc-900 hover:shadow-lg hover:scale-105">
+            <ChevronLeft className="w-3 h-3 group-hover:-translate-x-1 transition-transform" />
             {step === 1 ? 'Cancel' : 'Back'}
           </button>
           <button
             onClick={handleNext}
             disabled={!isStepValid()}
-            className={`flex items-center gap-2 px-8 py-3 rounded-lg font-medium transition-all shadow-sm ${
-              isStepValid()
-                ? 'bg-zinc-900 text-white hover:bg-zinc-800 hover:shadow-md hover:-translate-y-0.5'
-                : 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
-            }`}
+            className={`flex items-center gap-1.5 px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 group text-xs border ${isStepValid()
+              ? 'bg-white text-zinc-900 border-zinc-200 hover:bg-gradient-to-r hover:from-zinc-900 hover:to-zinc-800 hover:text-white hover:border-zinc-900 hover:shadow-lg hover:scale-105'
+              : 'bg-white text-zinc-900 border-zinc-200 cursor-not-allowed'
+              }`}
           >
-            {step === 5 ? 'Review' : (step === 6 ? 'Create & Process' : 'Continue')}
-            <ChevronRight className="w-4 h-4" />
+            {step === 5 ? 'Review' : (step === 6 ? 'Create Assignment' : 'Continue')}
+            <ChevronRight className={`w-3 h-3 ${isStepValid() ? 'group-hover:translate-x-1' : ''} transition-transform`} />
           </button>
         </div>
       </div>

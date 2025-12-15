@@ -104,5 +104,33 @@ The project is organized into two main directories: `client` and `server`.
 1.  **Upload Assignment**: An instructor uploads an assignment specification (PDF). A background worker (`rubricProcessor.js`) is triggered to call an AI service to extract the grading rubric and save it.
 2.  **Upload Submission**: A student submission (e.g., a `.pdf` or `.ipynb` file) is uploaded.
 3.  **Processing**: The file is processed by a dedicated worker (`submissionProcessor.js`). If it's an `.ipynb` file, it's converted to PDF. Text is then extracted from the PDF.
-4.  **Evaluation**: Once processed, the submission is passed to the `evaluationProcessor.js`. This worker constructs a detailed prompt containing the submission text, the assignment rubric, and (if available) the model solution. It then calls the Gemini API to get a grade and detailed feedback.
 5.  **View Results**: The final grade and evaluation feedback are saved to the database and can be viewed on the results page.
+
+## Documentation
+
+### Plan-Based Tracking System
+This application includes a comprehensive plan-based subscription system that tracks user activity and enforces limits based on their subscription tier. For detailed information about:
+
+- Plan tiers and limits
+- Backend implementation
+- Frontend components
+- API endpoints
+- Testing procedures
+- Future enhancements
+
+Please see: **[PLAN_TRACKING_SYSTEM.md](./PLAN_TRACKING_SYSTEM.md)**
+
+### Available Plans
+- **Free**: 3 assignments, 10 submissions each, 1 project
+- **Basic** ($9/mo): 10 assignments, 50 submissions each, 5 projects  
+- **Pro** ($29/mo): 50 assignments, 200 submissions each, 25 projects
+- **Enterprise** (Custom): Unlimited everything with dedicated support
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License.
+

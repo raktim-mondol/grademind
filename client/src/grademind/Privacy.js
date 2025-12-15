@@ -7,10 +7,10 @@ const Privacy = ({ onBack }) => {
       <nav className="w-full px-6 py-4 border-b border-zinc-200 sticky top-0 bg-white/80 backdrop-blur-sm z-20">
         <div className="max-w-4xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-2 cursor-pointer" onClick={onBack}>
-            <div className="w-6 h-6 bg-black rounded-sm flex items-center justify-center">
-              <Check className="w-4 h-4 text-white" />
+            <div className="w-6 h-6 bg-white border-2 border-black rounded-sm flex items-center justify-center">
+              <Check className="w-4 h-4 text-black" strokeWidth={3} />
             </div>
-            <span className="font-semibold text-lg tracking-tight text-black">grademind.ai</span>
+            <span className="font-semibold text-lg tracking-tight text-black">GradeMind.ai</span>
           </div>
           <button onClick={onBack} className="text-sm font-medium text-zinc-500 hover:text-black flex items-center gap-1">
             <ChevronLeft className="w-4 h-4" /> Back
@@ -71,7 +71,7 @@ const Privacy = ({ onBack }) => {
             <p className="text-zinc-600 leading-relaxed">
               If you have any questions about this Privacy Policy, please contact us at:
               <br />
-              <a href="mailto:privacy@grademind.ai" className="text-black font-medium underline">privacy@grademind.ai</a>
+              <a href="mailto:privacy@grademind.ai" className="text-black font-medium underline">privacy@GradeMind.ai</a>
             </p>
           </section>
         </div>

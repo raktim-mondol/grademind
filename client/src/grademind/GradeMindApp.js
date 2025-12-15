@@ -1,27 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth, useUser, SignIn, SignUp } from '@clerk/clerk-react';
+import { useAuth, useUser, SignIn, SignUp } from '../auth/ClerkWrapper';
 import api from '../utils/api';
 import Landing from './Landing';
-import SetupForm from './SetupForm';
-import ProjectSetupForm from './ProjectSetupForm';
 import Dashboard from './Dashboard';
 import Workspaces from './Workspaces';
 import Pricing from './Pricing';
 import Docs from './Docs';
 import Privacy from './Privacy';
 import Terms from './Terms';
+import Settings from './Settings';
+import ConfirmationModal from '../components/ui/ConfirmationModal';
 
 const AppView = {
   LANDING: 'LANDING',
   PRICING: 'PRICING',
   WORKSPACES: 'WORKSPACES',
   SETUP: 'SETUP',
-  PROJECT_SETUP: 'PROJECT_SETUP',
   DASHBOARD: 'DASHBOARD',
-  PROJECT_DASHBOARD: 'PROJECT_DASHBOARD',
   DOCS: 'DOCS',
   PRIVACY: 'PRIVACY',
   TERMS: 'TERMS',
+  SETTINGS: 'SETTINGS',
   SIGN_IN: 'SIGN_IN',
   SIGN_UP: 'SIGN_UP'
 };
@@ -31,9 +30,22 @@ function GradeMindApp() {
   const { user } = useUser();
   const [view, setView] = useState(AppView.LANDING);
   const [assignments, setAssignments] = useState([]);
-  const [projects, setProjects] = useState([]);
   const [activeAssignmentId, setActiveAssignmentId] = useState(null);
-  const [activeProjectId, setActiveProjectId] = useState(null);
+
+  // Confirmation Modal State
+  const [confirmation, setConfirmation] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: null,
+    variant: 'danger'
+  });
+
+  const closeConfirmation = () => {
+    setConfirmation(prev => ({ ...prev, isOpen: false }));
+  };
+
+
 
   // Load assignments and projects from backend API (with localStorage fallback)
   useEffect(() => {
@@ -67,7 +79,7 @@ function GradeMindApp() {
                 students: s.students || []
               })),
               submissionCount: a.submissionCount || 0,
-              createdAt: new Date(a.createdAt).getTime(),
+              createdAt: a.createdAt ? (typeof a.createdAt === 'number' ? a.createdAt : new Date(a.createdAt).getTime()) : Date.now(),
               backendId: a._id,
               processingStatus: a.processingStatus
             }));
@@ -76,38 +88,11 @@ function GradeMindApp() {
             console.log('✅ Loaded', backendAssignments.length, 'assignments from backend');
           }
 
-          // Fetch projects from backend
-          const projectsResponse = await api.get('/projects', {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-          });
-
-          if (projectsResponse.data?.projects) {
-            const backendProjects = projectsResponse.data.projects.map(p => ({
-              id: p._id,
-              config: {
-                title: p.title,
-                description: p.description,
-                totalPoints: p.totalPoints,
-                projectType: p.projectType,
-                programmingLanguage: p.programmingLanguage,
-                rubricFile: p.rubricFile ? { name: p.rubricFile.split('/').pop() } : undefined,
-              },
-              submissions: [],
-              createdAt: new Date(p.createdAt).getTime(),
-              backendId: p._id,
-              processingStatus: p.processingStatus
-            }));
-
-            setProjects(backendProjects);
-            console.log('✅ Loaded', backendProjects.length, 'projects from backend');
-          }
-
         } catch (error) {
           console.error('❌ Error fetching from backend, falling back to localStorage:', error);
 
           // Fallback to localStorage
           const assignmentKey = `grademind-assignments-${user.id}`;
-          const projectKey = `grademind-projects-${user.id}`;
 
           const savedAssignments = localStorage.getItem(assignmentKey);
           if (savedAssignments) {
@@ -115,15 +100,6 @@ function GradeMindApp() {
               setAssignments(JSON.parse(savedAssignments));
             } catch (e) {
               console.error('Failed to load saved assignments:', e);
-            }
-          }
-
-          const savedProjects = localStorage.getItem(projectKey);
-          if (savedProjects) {
-            try {
-              setProjects(JSON.parse(savedProjects));
-            } catch (e) {
-              console.error('Failed to load saved projects:', e);
             }
           }
         }
@@ -155,25 +131,6 @@ function GradeMindApp() {
       }
     }
   }, [assignments, isSignedIn, user]);
-
-  // Save projects to localStorage whenever they change (keyed by user ID)
-  useEffect(() => {
-    if (isSignedIn && user) {
-      const storageKey = `grademind-projects-${user.id}`;
-      const projectsToSave = projects.map(p => ({
-        ...p,
-        config: p.config ? {
-          ...p.config,
-          rubricFile: p.config.rubricFile ? { name: p.config.rubricFile.name } : undefined,
-        } : p.config
-      }));
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(projectsToSave));
-      } catch (error) {
-        console.error('Failed to save projects to localStorage:', error);
-      }
-    }
-  }, [projects, isSignedIn, user]);
 
   // Redirect to workspaces when user signs in
   useEffect(() => {
@@ -329,125 +286,49 @@ function GradeMindApp() {
     setView(AppView.DASHBOARD);
   };
 
-  const handleDeleteAssignment = async (id) => {
-    if (window.confirm('Are you sure you want to delete this assignment?')) {
-      try {
-        console.log('🗑️ Deleting assignment:', id);
+  const handleDeleteAssignment = (id) => {
+    setConfirmation({
+      isOpen: true,
+      title: 'Delete Assignment',
+      message: 'Are you sure you want to delete this assignment? This action cannot be undone and all associated submissions will be lost.',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          console.log('🗑️ Deleting assignment:', id);
 
-        // Get auth token from Clerk
-        const token = await window.Clerk?.session?.getToken();
+          // Get auth token from Clerk
+          const token = await window.Clerk?.session?.getToken();
 
-        // Call backend API to delete
-        const response = await api.delete(`/assignments/${id}`, {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-        });
+          // Call backend API to delete
+          const response = await api.delete(`/assignments/${id}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+          });
 
-        console.log('✅ Assignment deleted from backend:', id, response.data);
+          console.log('✅ Assignment deleted from backend:', id, response.data);
 
-        // Remove from local state
-        setAssignments(prev => prev.filter(a => a.id !== id));
-      } catch (error) {
-        console.error('❌ Error deleting assignment:', error);
-        console.error('Response:', error.response?.data);
-        alert(`Failed to delete assignment: ${error.response?.data?.error || error.message}`);
-      }
-    }
-  };
-
-  // Project handlers
-  const handleCreateProject = async (config) => {
-    try {
-      // Create FormData for multipart upload
-      const formData = new FormData();
-
-      // Add basic fields
-      formData.append('title', config.title);
-      formData.append('description', config.description || '');
-      formData.append('totalPoints', config.totalPoints || 100);
-      formData.append('projectType', config.projectType);
-      formData.append('programmingLanguage', config.programmingLanguage || '');
-
-      // Helper to convert base64 to Blob
-      const base64ToBlob = (base64Data, mimeType) => {
-        const byteCharacters = atob(base64Data);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
+          // Remove from local state
+          setAssignments(prev => prev.filter(a => a.id !== id));
+          closeConfirmation();
+        } catch (error) {
+          console.error('❌ Error deleting assignment:', error);
+          console.error('Response:', error.response?.data);
+          alert(`Failed to delete assignment: ${error.response?.data?.error || error.message}`);
+          closeConfirmation();
         }
-        const byteArray = new Uint8Array(byteNumbers);
-        return new Blob([byteArray], { type: mimeType });
-      };
-
-      // Handle rubric file
-      if (config.rubricFile) {
-        const blob = base64ToBlob(config.rubricFile.data, config.rubricFile.mimeType);
-        formData.append('rubric', blob, config.rubricFile.name);
-      } else if (config.rubric) {
-        const blob = new Blob([config.rubric], { type: 'text/plain' });
-        formData.append('rubric', blob, 'rubric.txt');
       }
-
-      console.log('📤 Sending project to backend API...');
-
-      // Get auth token from Clerk
-      const token = await window.Clerk?.session?.getToken();
-
-      // POST to backend API
-      const response = await api.post('/projects', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          ...(token && { 'Authorization': `Bearer ${token}` })
-        }
-      });
-
-      console.log('✅ Project created:', response.data);
-
-      // Create local project object with backend ID
-      const newProject = {
-        id: response.data.project._id,
-        config,
-        submissions: [],
-        createdAt: Date.now(),
-        backendId: response.data.project._id,
-        processingStatus: response.data.project.processingStatus
-      };
-
-      setProjects(prev => [...prev, newProject]);
-      setActiveProjectId(newProject.id);
-      setView(AppView.PROJECT_DASHBOARD);
-
-    } catch (error) {
-      console.error('❌ Error creating project:', error);
-      alert(`Failed to create project: ${error.response?.data?.error || error.message}`);
-    }
+    });
   };
 
-  const handleUpdateProject = (updatedProject) => {
-    setProjects(prev => prev.map(p => p.id === updatedProject.id ? updatedProject : p));
-  };
 
-  const handleSelectProject = (id) => {
-    setActiveProjectId(id);
-    setView(AppView.PROJECT_DASHBOARD);
-  };
-
-  const handleDeleteProject = (id) => {
-    if (window.confirm('Are you sure you want to delete this project?')) {
-      setProjects(prev => prev.filter(p => p.id !== id));
-    }
-  };
 
   const handleLogout = async () => {
     await signOut();
     setView(AppView.LANDING);
     setActiveAssignmentId(null);
-    setActiveProjectId(null);
     setAssignments([]);
-    setProjects([]);
   };
 
   const activeAssignment = assignments.find(a => a.id === activeAssignmentId);
-  const activeProject = projects.find(p => p.id === activeProjectId);
 
   // Get user display name
   const getUserDisplayName = () => {
@@ -538,7 +419,9 @@ function GradeMindApp() {
 
       {view === AppView.DOCS && (
         <Docs
-          onBack={() => setView(AppView.LANDING)}
+          activeView={view}
+          onViewChange={setView}
+          onLogout={handleLogout}
         />
       )}
 
@@ -557,32 +440,33 @@ function GradeMindApp() {
       {view === AppView.WORKSPACES && isSignedIn && (
         <Workspaces
           assignments={assignments}
-          projects={projects}
-          onCreateNew={() => setView(AppView.SETUP)}
-          onCreateProject={() => setView(AppView.PROJECT_SETUP)}
+          projects={[]}
+          onCreateNew={handleCreateAssignment}
           onSelect={handleSelectAssignment}
-          onSelectProject={handleSelectProject}
           onDelete={handleDeleteAssignment}
-          onDeleteProject={handleDeleteProject}
           onLogout={handleLogout}
           userName={getUserDisplayName()}
           userImageUrl={user?.imageUrl}
+          activeView={view}
+          onViewChange={setView}
         />
       )}
 
-      {view === AppView.SETUP && isSignedIn && (
-        <SetupForm
-          onComplete={handleCreateAssignment}
-          onCancel={() => setView(AppView.WORKSPACES)}
-        />
+      {view === AppView.WORKSPACES && !isSignedIn && (
+        <div className="min-h-screen flex items-center justify-center bg-zinc-50">
+          <div className="text-center">
+            <p className="text-zinc-900 mb-4">Please sign in to access workspaces</p>
+            <button
+              onClick={() => setView(AppView.SIGN_IN)}
+              className="px-4 py-2 bg-black text-white rounded-lg hover:bg-zinc-800"
+            >
+              Sign In
+            </button>
+          </div>
+        </div>
       )}
 
-      {view === AppView.PROJECT_SETUP && isSignedIn && (
-        <ProjectSetupForm
-          onComplete={handleCreateProject}
-          onCancel={() => setView(AppView.WORKSPACES)}
-        />
-      )}
+
 
       {view === AppView.DASHBOARD && activeAssignment && isSignedIn && (
         <Dashboard
@@ -592,14 +476,25 @@ function GradeMindApp() {
         />
       )}
 
-      {view === AppView.PROJECT_DASHBOARD && activeProject && isSignedIn && (
-        <Dashboard
-          assignment={activeProject}
-          onUpdateAssignment={handleUpdateProject}
-          onBack={() => setView(AppView.WORKSPACES)}
-          isProject={true}
+
+
+      {view === AppView.SETTINGS && isSignedIn && (
+        <Settings
+          activeView={view}
+          onViewChange={setView}
+          onLogout={handleLogout}
         />
       )}
+
+      <ConfirmationModal
+        isOpen={confirmation.isOpen}
+        title={confirmation.title}
+        message={confirmation.message}
+        onConfirm={confirmation.onConfirm}
+        onCancel={closeConfirmation}
+        variant={confirmation.variant}
+        confirmText="Delete"
+      />
     </div>
   );
 }

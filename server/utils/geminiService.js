@@ -51,13 +51,13 @@ let isProcessingQueue = false;
 async function enforceRateLimit() {
   const now = Date.now();
   const timeSinceLastRequest = now - lastRequestTime;
-  
+
   if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
     const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
     console.log(`Rate limiting: waiting ${waitTime}ms before next request (RPM: 5)`);
     await new Promise(resolve => setTimeout(resolve, waitTime));
   }
-  
+
   lastRequestTime = Date.now();
 }
 
@@ -74,13 +74,13 @@ async function processQueue() {
   if (isProcessingQueue || requestQueue.length === 0) {
     return;
   }
-  
+
   isProcessingQueue = true;
   console.log(`Processing queue with ${requestQueue.length} requests`);
-  
+
   while (requestQueue.length > 0) {
     const { apiCall, resolve, reject } = requestQueue.shift();
-    
+
     try {
       await enforceRateLimit();
       const result = await apiCall();
@@ -91,7 +91,7 @@ async function processQueue() {
       reject(error);
     }
   }
-  
+
   isProcessingQueue = false;
   console.log(`Queue processing completed`);
 }
@@ -108,16 +108,16 @@ async function withRetry(apiCall, maxRetries = 3, baseDelay = 15000) {
       if (attempts >= maxRetries) {
         throw error;
       }
-      
+
       // Handle quota limits specifically
       if (error.status === 429) {
         // Extract retry delay from error if available
-        const retryAfter = error.errorDetails?.find(detail => 
+        const retryAfter = error.errorDetails?.find(detail =>
           detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
         )?.retryDelay;
-        
+
         let waitTime = Math.max(baseDelay, 30000); // At least 30 seconds for rate limits
-        
+
         if (retryAfter) {
           // Parse retry delay (e.g., "11s" -> 11000ms)
           const seconds = parseInt(retryAfter.replace('s', ''));
@@ -125,7 +125,7 @@ async function withRetry(apiCall, maxRetries = 3, baseDelay = 15000) {
             waitTime = Math.max(waitTime, seconds * 1000);
           }
         }
-        
+
         console.log(`Rate limit hit, waiting ${waitTime}ms before retry ${attempts}/${maxRetries}`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
@@ -191,7 +191,7 @@ async function getGeminiResponse(prompt, jsonResponse = false) {
         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
       ],
     });
-    
+
     // Call the API with retries
     const result = await withRetry(async () => {
       const start = Date.now();
@@ -199,15 +199,15 @@ async function getGeminiResponse(prompt, jsonResponse = false) {
       console.log(`Gemini API call completed in ${Date.now() - start}ms`);
       return response;
     });
-    
+
     // Extract and return the text response
     const responseText = result.response.text();
-    
+
     // Print the full API response for debugging
     console.log('=== GEMINI TEXT API RESPONSE START ===');
     console.log(responseText);
     console.log('=== GEMINI TEXT API RESPONSE END ===');
-    
+
     return responseText;
   } catch (error) {
     console.error('Error getting Gemini response:', error);
@@ -233,15 +233,15 @@ async function evaluateSubmission(assignmentData, rubricData, solutionData, subm
     if (!assignmentData || !submissionFilePath) {
       throw new Error("Missing required data (assignment or file path) for evaluation");
     }
-    
+
     // Store original file path for cleanup later
     const originalSubmissionPath = submissionFilePath;
-    
+
     // Determine file type from extension
     const path = require('path');
     const fileExtension = path.extname(submissionFilePath).toLowerCase();
     let mimeType, originalFileType;
-    
+
     if (fileExtension === '.pdf') {
       mimeType = 'application/pdf';
       originalFileType = '.pdf';
@@ -249,20 +249,20 @@ async function evaluateSubmission(assignmentData, rubricData, solutionData, subm
       // For .ipynb files, we'll process them with pdfExtractor to convert to PDF
       const { processFileForGemini } = require('./pdfExtractor');
       const fileProcessResult = await processFileForGemini(submissionFilePath);
-      
+
       if (!fileProcessResult.success) {
         throw new Error(`Failed to process Jupyter notebook: ${fileProcessResult.error}`);
       }
-      
+
       submissionFilePath = fileProcessResult.filePath; // Use the converted PDF file
       mimeType = 'application/pdf';
       originalFileType = '.ipynb';
     } else {
       throw new Error(`Unsupported file type: ${fileExtension}. Only PDF and .ipynb files are supported.`);
     }
-    
+
     console.log(`Processing ${originalFileType} file for Gemini evaluation: ${submissionFilePath}`);
-    
+
     // Read the file directly (PDF or HTML converted from .ipynb)
     let fileBuffer;
     try {
@@ -314,13 +314,36 @@ async function evaluateSubmission(assignmentData, rubricData, solutionData, subm
 
     // Calculate total possible score
     const totalPossibleScore = calculateTotalPossibleScore(assignmentData, rubricData);
-    
+
     // --- Construct the Text Part of the Prompt --- 
-    const fileTypeDescription = originalFileType === '.ipynb' 
-      ? 'Jupyter notebook (converted to PDF)' 
-      : 'PDF document';
-    
-    const textPromptPart = `
+    const fileTypeDescription = originalFileType === '.ipynb' ? 'Jupyter notebook (converted to PDF)' : 'PDF document';
+
+    let textPromptPart = '';
+
+    if (assignmentData.gradingSystemPrompt && assignmentData.gradingSystemPrompt.trim().length > 50) {
+      console.log('Using Custom Grading System Prompt from Assignment');
+      textPromptPart = assignmentData.gradingSystemPrompt;
+
+      // Append standard Context to the custom prompt
+      textPromptPart += `
+      
+      ## CURRENT SUBMISSION CONTEXT
+      You are evaluating the following student submission:
+      - Student ID: ${studentId || 'Not provided'}
+      - File Type: ${originalFileType} (${fileTypeDescription})
+      
+      INSTRUCTIONS:
+      1. Analyze the attached ${fileTypeDescription}.
+      2. Apply the detailed Grading Rubric and Analysis Rules defined in the System Prompt above.
+      3. Output the result in the JSON format defined in the Schema above.
+      
+      ${originalFileType === '.ipynb' ?
+          'This submission was originally a Jupyter notebook converted to PDF. Analyze code cells, markdown, and execution outputs.' :
+          'This is a PDF document submission. Analyze text, images, and any handwritten or typed content.'
+        }
+      `;
+    } else {
+      textPromptPart = `
 You are an automated assignment grading assistant. Your task is to evaluate the student's submission provided as a ${fileTypeDescription} against the assignment requirements, grading rubric, model solution, and the specific question structure provided below. 
 
 ⚠️ **CRITICAL REQUIREMENT - READ THIS FIRST:**
@@ -332,9 +355,9 @@ You MUST provide DETAILED SUBSECTION-LEVEL grading for EVERY SINGLE QUESTION in 
 This is NOT optional - it is MANDATORY for every submission.
 
 ${originalFileType === '.ipynb' ?
-  'This submission was originally a Jupyter notebook containing code cells, markdown explanations, and execution outputs, which has been converted to PDF format. Analyze all content including code, explanations, outputs, plots, and any visual elements.' :
-  'This is a PDF document submission. Analyze the entire content of the document including text, images, tables, charts, graphs, code snippets, mathematical expressions, diagrams, and any visual elements.'
-}
+          'This submission was originally a Jupyter notebook containing code cells, markdown explanations, and execution outputs, which has been converted to PDF format. Analyze all content including code, explanations, outputs, plots, and any visual elements.' :
+          'This is a PDF document submission. Analyze the entire content of the document including text, images, tables, charts, graphs, code snippets, mathematical expressions, diagrams, and any visual elements.'
+        }
 
 ${assignmentTitle || assignmentDescription ? `
 🎯 **INSTRUCTOR-PROVIDED CONTEXT (PRIORITY FOCUS):**
@@ -366,8 +389,8 @@ ${rubricScoringTable}
 
 MODEL SOLUTION:
 ${solutionData && Object.keys(solutionData).length > 0 && !solutionData.processing_error ?
-  `Solution available with ${solutionData.questions ? solutionData.questions.length : 0} question(s)` :
-  "No model solution available or solution processing failed."}
+          `Solution available with ${solutionData.questions ? solutionData.questions.length : 0} question(s)` :
+          "No model solution available or solution processing failed."}
 
 STUDENT INFORMATION:
 Student ID: ${studentId || 'Not provided'}
@@ -384,75 +407,75 @@ Validation Status:
 
 ${orchestratedData.validation?.issues && orchestratedData.validation.issues.length > 0 ? `
 Known Issues to Be Aware Of:
-${orchestratedData.validation.issues.map((issue, idx) => 
-  `${idx + 1}. [${issue.severity?.toUpperCase()}] ${issue.message}${issue.affectedQuestions && issue.affectedQuestions.length > 0 ? ` (Questions: ${issue.affectedQuestions.join(', ')})` : ''}`
-).join('\n')}
+${orchestratedData.validation.issues.map((issue, idx) =>
+            `${idx + 1}. [${issue.severity?.toUpperCase()}] ${issue.message}${issue.affectedQuestions && issue.affectedQuestions.length > 0 ? ` (Questions: ${issue.affectedQuestions.join(', ')})` : ''}`
+          ).join('\n')}
 ` : ''}
 
 ${orchestratedData.recommendations && orchestratedData.recommendations.length > 0 ? `
 Grading Recommendations:
-${orchestratedData.recommendations.map((rec, idx) => 
-  `${idx + 1}. [${rec.priority?.toUpperCase()}] ${rec.recommendation}`
-).join('\n')}
+${orchestratedData.recommendations.map((rec, idx) =>
+            `${idx + 1}. [${rec.priority?.toUpperCase()}] ${rec.recommendation}`
+          ).join('\n')}
 ` : ''}
 
 INTEGRATED QUESTION STRUCTURE (Use this as your primary grading guide):
-${orchestratedData.integratedStructure?.questions ? 
-  orchestratedData.integratedStructure.questions.map(q => {
-    let questionInfo = `
+${orchestratedData.integratedStructure?.questions ?
+            orchestratedData.integratedStructure.questions.map(q => {
+              let questionInfo = `
 Question ${q.number}: ${q.text}
 - Total Points: ${q.points}
 - Requirements: ${q.requirements && q.requirements.length > 0 ? q.requirements.join('; ') : 'See assignment description'}`;
-    
-    if (q.rubricCriteria && q.rubricCriteria.length > 0) {
-      questionInfo += `
+
+              if (q.rubricCriteria && q.rubricCriteria.length > 0) {
+                questionInfo += `
 - Rubric Criteria (${q.rubricCriteria.length} criteria):
-${q.rubricCriteria.map((c, idx) => 
-  `  ${idx + 1}. ${c.name} (Weight: ${c.weight || 'N/A'})
+${q.rubricCriteria.map((c, idx) =>
+                  `  ${idx + 1}. ${c.name} (Weight: ${c.weight || 'N/A'})
      Description: ${c.description || 'N/A'}
      ${c.markingScale ? `Marking Scale: ${c.markingScale}` : ''}`
-).join('\n')}`;
-    }
-    
-    if (q.solution?.available) {
-      questionInfo += `
+                ).join('\n')}`;
+              }
+
+              if (q.solution?.available) {
+                questionInfo += `
 - Solution Available: Yes
   Summary: ${q.solution.summary || 'See full solution'}
   Key Points: ${q.solution.keyPoints && q.solution.keyPoints.length > 0 ? q.solution.keyPoints.join('; ') : 'See solution details'}`;
-    } else {
-      questionInfo += `
+              } else {
+                questionInfo += `
 - Solution Available: No - Use assignment requirements for grading`;
-    }
-    
-    return questionInfo;
-  }).join('\n---\n')
-  : 'No integrated structure available - use raw assignment/rubric data'}
+              }
 
-**IMPORTANT**: The integrated structure above combines assignment questions, rubric criteria, and solutions into a unified grading guide. Use this structure as your PRIMARY reference for grading each question.
+              return questionInfo;
+            }).join('\n---\n')
+            : 'No integrated structure available - use raw assignment/rubric data'}
+
+**IMPORTANT**: The integrated structure above combines assignment questions, rubric criteria, and solutions into a unified grading guide. Use this structure as your PRIMARY grading guide.
 ` : ''}
 
 EVALUATION INSTRUCTIONS:
 1. Analyze the attached ${fileTypeDescription} which contains the student's submission.
 2. **Pay close attention to ALL content, including text, code, outputs, figures, images, charts, graphs, tables, mathematical expressions, and diagrams.**
-3. ${originalFileType === '.ipynb' ? 
-   'For Jupyter notebooks (converted to PDF), evaluate code quality, correctness, execution results, explanations in markdown cells, and any visualizations or plots. Pay attention to the cell structure and outputs that show the execution flow.' :
-   'For PDF documents, carefully examine all text content, code snippets, mathematical expressions, diagrams, charts, and visual elements. Pay special attention to handwritten or typed answers, code implementations, calculations, and any visual representations of solutions.'
-  }
+3. ${originalFileType === '.ipynb' ?
+          'For Jupyter notebooks (converted to PDF), evaluate code quality, correctness, execution results, explanations in markdown cells, and any visualizations or plots. Pay attention to the cell structure and outputs that show the execution flow.' :
+          'For PDF documents, carefully examine all text content, code snippets, mathematical expressions, diagrams, charts, and visual elements. Pay special attention to handwritten or typed answers, code implementations, calculations, and any visual representations of solutions.'
+        }
 4. The TOTAL maximum score for this assignment is ${totalPossibleScore} points.
 5. Grade EXACTLY according to the provided question structure and point values.
 6. Each question or subquestion must receive a score matching its defined point value in the question structure.
 7. ${rubricCriteria.length > 0 ?
-    '**IMPORTANT: A grading rubric has been provided. You MUST follow the rubric criteria strictly for each question. Use the specific criteria descriptions, marking scales, and point distributions defined in the rubric. Reference all content (text, code, visuals, outputs) when applying the rubric criteria.**' :
-    'Since no explicit rubric is provided, derive grading criteria from the assignment instructions and question descriptions. Create appropriate evaluation criteria based on what each question is asking for.'
-  }
+          '**IMPORTANT: A grading rubric has been provided. You MUST follow the rubric criteria strictly for each question. Use the specific criteria descriptions, marking scales, and point distributions defined in the rubric. Reference all content (text, code, visuals, outputs) when applying the rubric criteria.**' :
+          'Since no explicit rubric is provided, derive grading criteria from the assignment instructions and question descriptions. Create appropriate evaluation criteria based on what each question is asking for.'
+        }
 8. ${rubricCriteria.length > 0 ? '**CRITICAL: Use the question-to-criteria mappings provided in the rubric. Each criterion is mapped to specific question(s) and must be applied accordingly with the specified weights.**' : 'Base your grading criteria on standard expectations for the type of questions asked (e.g., correctness, completeness, clarity, code quality, explanation depth).'}
-${rubricCriteria.length > 0 ? `9. **MANDATORY SCORING RULE: For each criteriaGrade entry, the maxScore MUST EXACTLY MATCH the rubric criterion's weight (point value) from the scoring table above. The score awarded must be between 0 and that maxScore. DO NOT invent or modify point values.**` : ''}
+9. ${rubricCriteria.length > 0 ? `**MANDATORY SCORING RULE: For each criteriaGrade entry, the maxScore MUST EXACTLY MATCH the rubric criterion's weight (point value) from the scoring table above. The score awarded must be between 0 and that maxScore. DO NOT invent or modify point values.**` : ''}
 10. Do NOT convert scores to percentages. Use the raw scores exactly as specified.
 11. Provide detailed feedback for each question/subquestion${rubricCriteria.length > 0 ? ', **explicitly referencing which rubric criteria were met or not met**' : ''}${solutionData && Object.keys(solutionData).length > 0 && !solutionData.processing_error ? ' and comparing with the model solution' : ''} where applicable.
 12. ${originalFileType === '.ipynb' ?
-    'Include assessment of code implementation, execution results, documentation quality, and any visualizations. Consider the logical flow of the notebook and the quality of outputs.' :
-    'Include assessment of written explanations, code implementations (if any), mathematical work, diagrams, and any visual elements in your feedback. Describe what you observe in the document.'
-   }
+          'Include assessment of code implementation, execution results, documentation quality, and any visualizations. Consider the logical flow of the notebook and the quality of outputs.' :
+          'Include assessment of written explanations, code implementations (if any), mathematical work, diagrams, and any visual elements in your feedback. Describe what you observe in the document.'
+        }
 13. Provide an overall grade (sum of question/subquestion scores), ensuring it does not exceed the total possible score.
 14. Provide a list of strengths observed in the submission (considering all content).
 15. Provide a list of areas for improvement. **Each item MUST specify the question/section number where marks were lost, the number of points deducted, and a clear explanation of why marks were lost** (e.g., "Question 2b (-3 points): Missing error handling for edge cases and no validation of input parameters").
@@ -522,11 +545,8 @@ Provide your response ONLY as a valid JSON object matching the requested structu
 - "strengths": Array of strings (minimum 3 strengths).
 - "areasForImprovement": Array of strings (minimum 2 areas). **Each entry MUST follow this format: "Question X (-Y points): Reason for mark deduction"** (e.g., "Question 1a (-2 points): Incomplete implementation of the sorting algorithm, missing the merge step").
 - "suggestions": Array of strings (minimum 2 concrete suggestions).
-
-**YOU MUST NEVER SKIP SUBSECTION DETAILS IN criteriaGrades. Every question needs granular grading entries with detailed feedback.**
-
-IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a, 1b, 1c), create ONE entry for Question 1 with subsections array containing 1a, 1b, 1c details. The question's earnedScore should be the sum of subsection scores.
 `;
+    }
 
     // --- Construct the Multi-Modal Request Content --- 
     const contents = [
@@ -536,7 +556,7 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
           {
             inlineData: { // The inline file data
               mimeType: mimeType,
-              data: base64Data 
+              data: base64Data
             }
           }
         ]
@@ -549,7 +569,7 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
     console.log(`Submission file: ${submissionFilePath} (${mimeType})`);
     console.log(`File size: ${fileBuffer.length} bytes`);
     console.log(`Total possible score for evaluation: ${totalPossibleScore}`);
-    
+
     console.log('\n--- ASSIGNMENT DATA STRUCTURE ---');
     console.log('Assignment title:', assignmentData.title || 'Not provided');
     console.log('Assignment description:', assignmentData.description || 'Not provided');
@@ -557,32 +577,32 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
     if (questionStructure.length > 0) {
       console.log('Questions:');
       questionStructure.forEach((q, i) => {
-        console.log(`  Q${q.number || i+1}: ${q.question || 'N/A'} (${q.points || 0} points)`);
+        console.log(`  Q${q.number || i + 1}: ${q.question || 'N/A'} (${q.points || 0} points)`);
       });
     }
-    
+
     console.log('\n--- RUBRIC DATA STRUCTURE ---');
     if (rubricData && rubricData.grading_criteria) {
       console.log('Rubric criteria count:', rubricData.grading_criteria.length);
       rubricData.grading_criteria.forEach((crit, i) => {
-        console.log(`  Criterion ${i+1}: ${crit.criterionName || 'N/A'} (${crit.weight || 0} points)`);
+        console.log(`  Criterion ${i + 1}: ${crit.criterionName || 'N/A'} (${crit.weight || 0} points)`);
         console.log(`    Question: ${crit.question_number || 'General'}`);
         console.log(`    Description: ${crit.description || 'N/A'}`);
       });
     } else {
       console.log('No rubric data available');
     }
-    
+
     console.log('\n--- SOLUTION DATA STRUCTURE ---');
     if (solutionData && solutionData.questions) {
       console.log('Solution questions count:', solutionData.questions.length);
       solutionData.questions.forEach((q, i) => {
-        console.log(`  Solution Q${q.number || i+1}: ${q.questionSummary || 'N/A'}`);
+        console.log(`  Solution Q${q.number || i + 1}: ${q.questionSummary || 'N/A'}`);
       });
     } else {
       console.log('No solution data available or processing failed');
     }
-    
+
     console.log('\n--- ORCHESTRATED DATA STRUCTURE ---');
     if (orchestratedData) {
       console.log('✓ Orchestrated data is ACTIVE and will be used for evaluation');
@@ -600,13 +620,13 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
     } else {
       console.log('⚠ No orchestrated data available - using raw assignment/rubric/solution data');
     }
-    
+
     console.log('\n--- PROMPT BEING SENT TO GEMINI ---');
     console.log(textPromptPart);
     console.log('=== GEMINI INPUT DEBUG INFO END ===\n');
-    
+
     console.log(`Sending multi-modal evaluation request to Gemini API for ${originalFileType} file (as ${mimeType}): ${submissionFilePath}`);
-    
+
     try {
       // --- Make the API Call --- 
       const result = await withRetry(async () => {
@@ -615,29 +635,29 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
         console.log(`Gemini API call completed in ${Date.now() - start}ms`);
         return response;
       });
-      
+
       // Check if response exists and has the expected structure
       if (!result || !result.response || !result.response.candidates || !result.response.candidates[0]) {
         throw new Error("Invalid response structure from Gemini API");
       }
-      
+
       const candidate = result.response.candidates[0];
       if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
         throw new Error("No content found in Gemini response");
       }
-      
+
       const evaluationResult = candidate.content.parts[0].text;
       console.log(`Gemini evaluation response text length: ${evaluationResult ? evaluationResult.length : 0}`);
-      
+
       // Print the full API response for debugging
       console.log('=== GEMINI API RESPONSE START ===');
       console.log(evaluationResult);
       console.log('=== GEMINI API RESPONSE END ===');
-      
+
       if (!evaluationResult || evaluationResult.trim() === '') {
         throw new Error("Empty response from Gemini API");
       }
-      
+
       let parsedResult;
       try {
         const cleanedResponse = cleanJsonResponse(evaluationResult);
@@ -646,19 +666,19 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
         console.error("Failed to parse JSON response for evaluation:", evaluationResult.substring(0, 500));
         throw new Error(`Invalid JSON response from Gemini API: ${jsonError.message}`);
       }
-      
+
       console.log(`Received and parsed JSON response from Gemini API.`);
       console.log(`Parsed result summary: overallGrade=${parsedResult.overallGrade}, totalPossible=${parsedResult.totalPossible}, criteriaGrades=${parsedResult.criteriaGrades ? parsedResult.criteriaGrades.length : 0} items`);
-      
+
       // Ensure totalPossible is included
       if (!parsedResult.totalPossible && totalPossibleScore > 0) {
         parsedResult.totalPossible = totalPossibleScore;
         console.log(`Added missing totalPossible: ${totalPossibleScore}`);
       }
-      
+
       // Basic validation
       if (typeof parsedResult.overallGrade !== 'number' || !Array.isArray(parsedResult.criteriaGrades)) {
-          throw new Error("Gemini response did not match the expected JSON structure.");
+        throw new Error("Gemini response did not match the expected JSON structure.");
       }
 
       // *** CRITICAL VALIDATION: Ensure criteriaGrades has entries for ALL questions ***
@@ -666,24 +686,24 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
       const questionNumbers = questionStructure.map(q => String(q.number));
       console.log(`Expected questions from structure: [${questionNumbers.join(', ')}]`);
       console.log(`Received criteriaGrades count: ${parsedResult.criteriaGrades.length}`);
-      
+
       // Check which questions are covered in criteriaGrades
       const coveredQuestions = new Set();
       parsedResult.criteriaGrades.forEach(cg => {
         const qNum = String(cg.questionNumber || '').replace(/[^\d]/g, '').split('')[0]; // Extract base question number
         if (qNum) coveredQuestions.add(qNum);
       });
-      
+
       console.log(`Questions covered in criteriaGrades: [${Array.from(coveredQuestions).join(', ')}]`);
-      
+
       // Find missing questions
       const missingQuestions = questionNumbers.filter(qn => !coveredQuestions.has(qn));
-      
+
       if (missingQuestions.length > 0) {
         console.warn(`⚠️  WARNING: Missing criteriaGrades for questions: [${missingQuestions.join(', ')}]`);
         console.warn(`⚠️  This violates the prompt requirement that EVERY question must have criteriaGrades entries`);
         console.warn(`⚠️  LLM may not be following instructions properly. Consider re-running this submission.`);
-        
+
         // Log the actual criteriaGrades for debugging
         console.log('Actual criteriaGrades received:');
         parsedResult.criteriaGrades.forEach((cg, idx) => {
@@ -692,16 +712,16 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
       } else {
         console.log(`✅ All questions have criteriaGrades entries`);
       }
-      
+
       // Validate that criteriaGrades has detailed breakdown (multiple entries per question if subsections exist)
       const questionCounts = {};
       parsedResult.criteriaGrades.forEach(cg => {
         const baseQ = String(cg.questionNumber || '').charAt(0);
         questionCounts[baseQ] = (questionCounts[baseQ] || 0) + 1;
       });
-      
+
       console.log('CriteriaGrades count per question:', questionCounts);
-      
+
       // Check if we have subsection-level detail in questionScores
       if (parsedResult.questionScores && Array.isArray(parsedResult.questionScores)) {
         parsedResult.questionScores.forEach(qs => {
@@ -709,7 +729,7 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
             const qNum = String(qs.questionNumber);
             const subsectionCount = qs.subsections.length;
             const criteriaCount = questionCounts[qNum] || 0;
-            
+
             if (subsectionCount > 1 && criteriaCount === 1) {
               console.warn(`⚠️  Question ${qNum} has ${subsectionCount} subsections but only ${criteriaCount} criteriaGrade entry`);
               console.warn(`⚠️  Expected ${subsectionCount} separate criteriaGrade entries for detailed breakdown`);
@@ -717,7 +737,7 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
           }
         });
       }
-      
+
       console.log('=== CRITERIA GRADES VALIDATION END ===\n');
       // *** END VALIDATION ***
 
@@ -767,7 +787,7 @@ async function evaluateSubmissionWithText(assignmentData, rubricData, solutionDa
   try {
     // --- Prepare prompt components ---
     const questionStructure = assignmentData.questionStructure || [];
-    
+
     // Calculate question structure text
     let questionStructureText = 'Question Structure:\n';
     if (questionStructure.length > 0) {
@@ -798,7 +818,7 @@ async function evaluateSubmissionWithText(assignmentData, rubricData, solutionDa
 
     // Calculate total possible score
     const totalPossibleScore = calculateTotalPossibleScore(assignmentData, rubricData);
-    
+
     const prompt = `
 You are an automated assignment grading assistant. Your task is to evaluate the student's Jupyter notebook submission against the assignment requirements, grading rubric, and model solution provided below.
 
@@ -823,9 +843,9 @@ ${questionRubricText}
 ${criteriaQuestionMappingText}
 
 MODEL SOLUTION:
-${solutionData && Object.keys(solutionData).length > 0 && !solutionData.processing_error ? 
-  `Solution available with ${solutionData.questions ? solutionData.questions.length : 0} question(s)` : 
-  "No model solution available or solution processing failed."}
+${solutionData && Object.keys(solutionData).length > 0 && !solutionData.processing_error ?
+        `Solution available with ${solutionData.questions ? solutionData.questions.length : 0} question(s)` :
+        "No model solution available or solution processing failed."}
 
 STUDENT INFORMATION:
 Student ID: ${studentId || 'Not provided'}
@@ -840,10 +860,10 @@ EVALUATION INSTRUCTIONS:
 4. The TOTAL maximum score for this assignment is ${totalPossibleScore} points.
 5. Grade EXACTLY according to the provided question structure and point values.
 6. Each question or subquestion must receive a score matching its defined point value in the question structure.
-7. ${rubricCriteria.length > 0 ? 
-    '**IMPORTANT: A grading rubric has been provided. You MUST follow the rubric criteria strictly for each question. Use the specific criteria descriptions, marking scales, and point distributions defined in the rubric.**' : 
-    'Since no explicit rubric is provided, derive grading criteria from the assignment instructions and question descriptions. Create appropriate evaluation criteria based on what each question is asking for.'
-  }
+7. ${rubricCriteria.length > 0 ?
+        '**IMPORTANT: A grading rubric has been provided. You MUST follow the rubric criteria strictly for each question. Use the specific criteria descriptions, marking scales, and point distributions defined in the rubric.**' :
+        'Since no explicit rubric is provided, derive grading criteria from the assignment instructions and question descriptions. Create appropriate evaluation criteria based on what each question is asking for.'
+      }
 8. ${rubricCriteria.length > 0 ? '**CRITICAL: Use the question-to-criteria mappings provided in the rubric. Each criterion is mapped to specific question(s) and must be applied accordingly with the specified weights.**' : 'Base your grading criteria on standard expectations for the type of questions asked (e.g., correctness, completeness, clarity, code quality, explanation depth).'}
 9. Do NOT convert scores to percentages. Use the raw scores exactly as specified.
 10. Provide detailed feedback for each question/subquestion${rubricCriteria.length > 0 ? ', **explicitly referencing which rubric criteria were met or not met**' : ''}${solutionData && Object.keys(solutionData).length > 0 && !solutionData.processing_error ? ' and comparing with the model solution' : ''} where applicable.
@@ -924,23 +944,23 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
     console.log(`Sending text-based evaluation request to Gemini API for Jupyter notebook content`);
     console.log(`Text length: ${submissionText.length} characters`);
     console.log(`Total possible score for evaluation: ${totalPossibleScore}`);
-    
+
     const result = await getGeminiResponse(prompt, true);
     const cleanedResponse = cleanJsonResponse(result);
     const parsedResult = JSON.parse(cleanedResponse);
-    
+
     console.log(`Received and parsed JSON response from Gemini API for notebook evaluation.`);
     console.log(`Parsed result summary: overallGrade=${parsedResult.overallGrade}, totalPossible=${parsedResult.totalPossible}, criteriaGrades=${parsedResult.criteriaGrades ? parsedResult.criteriaGrades.length : 0} items`);
-    
+
     // Ensure totalPossible is included
     if (!parsedResult.totalPossible && totalPossibleScore > 0) {
       parsedResult.totalPossible = totalPossibleScore;
       console.log(`Added missing totalPossible: ${totalPossibleScore}`);
     }
-    
+
     // Basic validation
     if (typeof parsedResult.overallGrade !== 'number' || !Array.isArray(parsedResult.criteriaGrades)) {
-        throw new Error("Gemini response did not match the expected JSON structure.");
+      throw new Error("Gemini response did not match the expected JSON structure.");
     }
 
     // *** CRITICAL VALIDATION: Ensure criteriaGrades has entries for ALL questions ***
@@ -948,24 +968,24 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
     const questionNumbers = questionStructure.map(q => String(q.number));
     console.log(`Expected questions from structure: [${questionNumbers.join(', ')}]`);
     console.log(`Received criteriaGrades count: ${parsedResult.criteriaGrades.length}`);
-    
+
     // Check which questions are covered in criteriaGrades
     const coveredQuestions = new Set();
     parsedResult.criteriaGrades.forEach(cg => {
       const qNum = String(cg.questionNumber || '').replace(/[^\d]/g, '').split('')[0]; // Extract base question number
       if (qNum) coveredQuestions.add(qNum);
     });
-    
+
     console.log(`Questions covered in criteriaGrades: [${Array.from(coveredQuestions).join(', ')}]`);
-    
+
     // Find missing questions
     const missingQuestions = questionNumbers.filter(qn => !coveredQuestions.has(qn));
-    
+
     if (missingQuestions.length > 0) {
       console.warn(`⚠️  WARNING: Missing criteriaGrades for questions: [${missingQuestions.join(', ')}]`);
       console.warn(`⚠️  This violates the prompt requirement that EVERY question must have criteriaGrades entries`);
       console.warn(`⚠️  LLM may not be following instructions properly. Consider re-running this submission.`);
-      
+
       // Log the actual criteriaGrades for debugging
       console.log('Actual criteriaGrades received:');
       parsedResult.criteriaGrades.forEach((cg, idx) => {
@@ -974,16 +994,16 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
     } else {
       console.log(`✅ All questions have criteriaGrades entries`);
     }
-    
+
     // Validate that criteriaGrades has detailed breakdown (multiple entries per question if subsections exist)
     const questionCounts = {};
     parsedResult.criteriaGrades.forEach(cg => {
       const baseQ = String(cg.questionNumber || '').charAt(0);
       questionCounts[baseQ] = (questionCounts[baseQ] || 0) + 1;
     });
-    
+
     console.log('CriteriaGrades count per question:', questionCounts);
-    
+
     // Check if we have subsection-level detail in questionScores
     if (parsedResult.questionScores && Array.isArray(parsedResult.questionScores)) {
       parsedResult.questionScores.forEach(qs => {
@@ -991,7 +1011,7 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
           const qNum = String(qs.questionNumber);
           const subsectionCount = qs.subsections.length;
           const criteriaCount = questionCounts[qNum] || 0;
-          
+
           if (subsectionCount > 1 && criteriaCount === 1) {
             console.warn(`⚠️  Question ${qNum} has ${subsectionCount} subsections but only ${criteriaCount} criteriaGrade entry`);
             console.warn(`⚠️  Expected ${subsectionCount} separate criteriaGrade entries for detailed breakdown`);
@@ -999,7 +1019,7 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
         }
       });
     }
-    
+
     console.log('=== CRITERIA GRADES VALIDATION (Text-based) END ===\n');
     // *** END VALIDATION ***
 
@@ -1033,23 +1053,23 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
     submission.evaluationStartTime = new Date();
     submission.evaluationStatus = 'processing';
     await submission.save();
-    
+
     // Get the project details for evaluation criteria
     const mongoose = require('mongoose');
     const Project = mongoose.model('Project');
     const project = await Project.findById(submission.projectId);
-    
+
     if (!project) {
       throw new Error(`Project ${submission.projectId} not found`);
     }
-    
+
     // Use provided project data or get it from database
     const processedProjectData = projectData || project.processedData;
     const processedRubricData = rubricData || project.processedRubric;
-    
+
     console.log(`Evaluating project submission with ${processedProjectData ? 'provided' : 'db'} project data`);
     console.log(`Evaluating project submission with ${processedRubricData ? 'provided' : 'db'} rubric data`);
-    
+
     // Initialize evaluation result
     let evaluationResult = {
       codeEvaluation: {
@@ -1069,7 +1089,7 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
       overallScore: null,
       overallFeedback: null
     };
-    
+
     // Get rubric information from processed data or extract from file
     let rubricInfo = '';
     if (processedRubricData && processedRubricData.grading_criteria) {
@@ -1077,7 +1097,7 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
       const criteria = processedRubricData.grading_criteria;
       rubricInfo = `Rubric (${processedRubricData.total_points || project.totalPoints} total points):\n`;
       criteria.forEach((criterion, index) => {
-        rubricInfo += `${index+1}. ${criterion.criterionName || 'Criterion'} (${criterion.weight || 'N/A'} points): ${criterion.description || 'No description'}\n`;
+        rubricInfo += `${index + 1}. ${criterion.criterionName || 'Criterion'} (${criterion.weight || 'N/A'} points): ${criterion.description || 'No description'}\n`;
         if (criterion.marking_scale) {
           rubricInfo += `   Scale: ${criterion.marking_scale}\n`;
         }
@@ -1097,12 +1117,12 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
         // Continue without rubric text
       }
     }
-    
+
     // Project description with extracted content if available
-    const extendedDescription = processedProjectData && processedProjectData.extracted_text 
-      ? `${project.description}\n\nDetailed instructions: ${processedProjectData.extracted_text.substring(0, 2000)}...` 
+    const extendedDescription = processedProjectData && processedProjectData.extracted_text
+      ? `${project.description}\n\nDetailed instructions: ${processedProjectData.extracted_text.substring(0, 2000)}...`
       : project.description;
-    
+
     // Evaluate code if present
     if (submission.codeFile && submission.codeText) {
       const codeEvaluation = await evaluateCode(
@@ -1112,10 +1132,10 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
         rubricInfo,
         project.totalPoints / (project.codeRequired && project.reportRequired ? 2 : 1) // Allocate points based on submission requirements
       );
-      
+
       evaluationResult.codeEvaluation = codeEvaluation;
     }
-    
+
     // Evaluate report if present
     if (submission.reportFile && submission.reportText) {
       const reportEvaluation = await evaluateReport(
@@ -1125,14 +1145,14 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
         rubricInfo,
         project.totalPoints / (project.codeRequired && project.reportRequired ? 2 : 1) // Allocate points based on submission requirements
       );
-      
+
       evaluationResult.reportEvaluation = reportEvaluation;
     }
-    
+
     // Calculate overall score and feedback
     const codeScore = evaluationResult.codeEvaluation.score || 0;
     const reportScore = evaluationResult.reportEvaluation.score || 0;
-    
+
     if (project.codeRequired && project.reportRequired) {
       // Both are required, so average the scores
       evaluationResult.overallScore = (codeScore + reportScore) / 2;
@@ -1146,7 +1166,7 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
       // Neither required (shouldn't happen, but just in case)
       evaluationResult.overallScore = Math.max(codeScore, reportScore);
     }
-    
+
     // Generate overall feedback
     try {
       const overallFeedback = await getOverallFeedback(
@@ -1158,21 +1178,21 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
         evaluationResult.overallScore,
         project.totalPoints
       );
-      
+
       evaluationResult.overallFeedback = overallFeedback;
     } catch (error) {
       console.error('Error generating overall feedback:', error);
       evaluationResult.overallFeedback = 'Could not generate overall feedback due to an error.';
     }
-    
+
     // Update the submission with the evaluation results
     submission.evaluationResult = evaluationResult;
     submission.evaluationEndTime = new Date();
     submission.evaluationStatus = 'completed';
     await submission.save();
-    
+
     return submission;
-    
+
   } catch (error) {
     console.error(`Error evaluating project submission ${submission._id}:`, error);
     submission.evaluationStatus = 'failed';
@@ -1235,14 +1255,14 @@ Format your response as JSON:
 
     const result = await getGeminiResponse(prompt, true);
     let evaluationResult;
-    
+
     try {
       const cleanedResponse = cleanJsonResponse(result);
       evaluationResult = JSON.parse(cleanedResponse);
-      
+
       // Ensure score is within bounds
       evaluationResult.score = Math.min(Math.max(0, evaluationResult.score), maxPoints);
-      
+
       return evaluationResult;
     } catch (error) {
       console.error('Error parsing code evaluation result:', error);
@@ -1315,14 +1335,14 @@ Format your response as JSON:
 
     const result = await getGeminiResponse(prompt, true);
     let evaluationResult;
-    
+
     try {
       const cleanedResponse = cleanJsonResponse(result);
       evaluationResult = JSON.parse(cleanedResponse);
-      
+
       // Ensure score is within bounds
       evaluationResult.score = Math.min(Math.max(0, evaluationResult.score), maxPoints);
-      
+
       return evaluationResult;
     } catch (error) {
       console.error('Error parsing report evaluation result:', error);
@@ -1397,15 +1417,15 @@ Your feedback should be helpful for the student's learning and growth.
 async function extractRubricFromAssignmentPDF(pdfFilePath, providedTotalPoints = null) {
   try {
     console.log(`Extracting rubric from assignment PDF: ${pdfFilePath}`);
-    
+
     // Read the PDF file
     const fs = require('fs').promises;
     const fileBuffer = await fs.readFile(pdfFilePath);
     const base64Data = fileBuffer.toString('base64');
-    
+
     const defaultTotalPoints = 100;
     const totalPoints = providedTotalPoints || defaultTotalPoints;
-    
+
     const prompt = `
 You are analyzing an assignment document to extract marking criteria and rubric information. 
 
@@ -1459,7 +1479,7 @@ Analyze the PDF document thoroughly and return ONLY a JSON object.`;
         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
       ],
     });
-    
+
     const contents = [
       {
         parts: [
@@ -1467,7 +1487,7 @@ Analyze the PDF document thoroughly and return ONLY a JSON object.`;
           {
             inlineData: {
               mimeType: 'application/pdf',
-              data: base64Data 
+              data: base64Data
             }
           }
         ]
@@ -1475,41 +1495,41 @@ Analyze the PDF document thoroughly and return ONLY a JSON object.`;
     ];
 
     console.log(`Sending assignment PDF to Gemini for rubric extraction: ${pdfFilePath}`);
-    
+
     console.log('\n=== ASSIGNMENT RUBRIC EXTRACTION PROMPT DEBUG START ===');
     console.log('Prompt being sent to Gemini for Assignment Rubric extraction:');
     console.log(prompt);
     console.log('=== ASSIGNMENT RUBRIC EXTRACTION PROMPT DEBUG END ===\n');
-    
+
     const result = await addToQueue(async () => {
       const start = Date.now();
       const response = await modelConfig.generateContent({ contents });
       console.log(`Gemini rubric extraction completed in ${Date.now() - start}ms`);
       return response;
     });
-    
+
     // Check if response exists and has the expected structure
     if (!result || !result.response || !result.response.candidates || !result.response.candidates[0]) {
       throw new Error("Invalid response structure from Gemini API");
     }
-    
+
     const candidate = result.response.candidates[0];
     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
       throw new Error("No content found in Gemini response");
     }
-    
+
     const responseText = candidate.content.parts[0].text;
     console.log(`Gemini rubric extraction response text length: ${responseText ? responseText.length : 0}`);
-    
+
     // Print the full API response for debugging
     console.log('\n=== GEMINI ASSIGNMENT RUBRIC EXTRACTION RESPONSE START ===');
     console.log(responseText);
     console.log('=== GEMINI ASSIGNMENT RUBRIC EXTRACTION RESPONSE END ===\n');
-    
+
     if (!responseText || responseText.trim() === '') {
       throw new Error("Empty response from Gemini API");
     }
-    
+
     let parsed;
     try {
       const cleanedResponse = cleanJsonResponse(responseText);
@@ -1518,19 +1538,19 @@ Analyze the PDF document thoroughly and return ONLY a JSON object.`;
       console.error("Failed to parse JSON response for assignment rubric extraction:", responseText.substring(0, 500));
       throw new Error(`Invalid JSON response from Gemini API: ${jsonError.message}`);
     }
-    
+
     // Ensure the parsed response has the expected structure
     if (!parsed.grading_criteria) {
       parsed.grading_criteria = [];
     }
-    
+
     // Make sure total_points is included
     if (!parsed.total_points) {
       parsed.total_points = totalPoints;
     }
-    
+
     console.log(`Successfully extracted ${parsed.grading_criteria.length} rubric criteria from assignment PDF`);
-    
+
     return parsed;
   } catch (error) {
     console.error("Error extracting rubric from assignment PDF:", error);
@@ -1560,12 +1580,12 @@ Analyze the PDF document thoroughly and return ONLY a JSON object.`;
 async function processAssignmentPDF(pdfFilePath) {
   try {
     console.log(`Processing assignment PDF directly with Gemini: ${pdfFilePath}`);
-    
+
     // Read the PDF file
     const fs = require('fs').promises;
     const fileBuffer = await fs.readFile(pdfFilePath);
     const base64Data = fileBuffer.toString('base64');
-    
+
     const prompt = `
 You are analyzing an assignment document. Extract the following key information and return it as a valid JSON object.
 
@@ -1600,7 +1620,7 @@ Return ONLY the JSON object. Ensure the JSON is complete and properly closed wit
         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
       ],
     });
-    
+
     const contents = [
       {
         parts: [
@@ -1608,7 +1628,7 @@ Return ONLY the JSON object. Ensure the JSON is complete and properly closed wit
           {
             inlineData: {
               mimeType: 'application/pdf',
-              data: base64Data 
+              data: base64Data
             }
           }
         ]
@@ -1618,48 +1638,48 @@ Return ONLY the JSON object. Ensure the JSON is complete and properly closed wit
     console.log(`Sending assignment PDF to Gemini API: ${pdfFilePath}`);
     console.log(`PDF file size: ${fileBuffer.length} bytes`);
     console.log(`Using maxOutputTokens: 65536`);
-    
+
     console.log('\n=== ASSIGNMENT PDF PROMPT DEBUG START ===');
     console.log('Prompt being sent to Gemini for Assignment PDF processing:');
     console.log(prompt);
     console.log('=== ASSIGNMENT PDF PROMPT DEBUG END ===\n');
-    
+
     const result = await addToQueue(async () => {
       const start = Date.now();
       const response = await modelConfig.generateContent({ contents });
       console.log(`Gemini PDF processing completed in ${Date.now() - start}ms`);
       return response;
     });
-    
+
     // Check if response exists and has the expected structure
     if (!result || !result.response || !result.response.candidates || !result.response.candidates[0]) {
       throw new Error("Invalid response structure from Gemini API");
     }
-    
+
     const candidate = result.response.candidates[0];
     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
       throw new Error("No content found in Gemini response");
     }
-    
+
     const responseText = candidate.content.parts[0].text;
     console.log(`Gemini assignment response text length: ${responseText ? responseText.length : 0}`);
-    
+
     // Print the full API response for debugging
     console.log('=== GEMINI ASSIGNMENT PDF RESPONSE START ===');
     console.log(responseText);
     console.log('=== GEMINI ASSIGNMENT PDF RESPONSE END ===');
-    
+
     if (!responseText || responseText.trim() === '') {
       throw new Error("Empty response from Gemini API");
     }
-    
+
     // Check if the response appears to be truncated (doesn't end with proper JSON closing)
     const trimmedResponse = responseText.trim();
     if (!trimmedResponse.endsWith('}') && !trimmedResponse.endsWith(']')) {
       console.warn("Response appears to be truncated - doesn't end with proper JSON closing");
       console.log(`Last 100 characters: ${trimmedResponse.slice(-100)}`);
     }
-    
+
     let parsed;
     try {
       const cleanedResponse = cleanJsonResponse(responseText);
@@ -1669,7 +1689,7 @@ Return ONLY the JSON object. Ensure the JSON is complete and properly closed wit
       console.error("Full response for debugging:", responseText);
       throw new Error(`Invalid JSON response from Gemini API: ${jsonError.message}`);
     }
-    
+
     return parsed;
   } catch (error) {
     console.error("Error processing assignment PDF with Gemini:", error);
@@ -1692,10 +1712,10 @@ async function processAssignment(extractedText) {
   try {
     // Limit text size to prevent API timeout issues
     const maxChars = 150000;
-    const trimmedText = extractedText.length > maxChars 
+    const trimmedText = extractedText.length > maxChars
       ? extractedText.substring(0, maxChars) + "... [content truncated]"
       : extractedText;
-    
+
     const prompt = `
 You are analyzing an assignment document. Extract the following key information in JSON format:
 1. Title: The assignment name
@@ -1713,11 +1733,11 @@ ${trimmedText}
 """`;
 
     console.log(`Sending assignment to Gemini API (${trimmedText.length} chars)`);
-    
+
     const result = await getGeminiResponse(prompt, true);
     const cleanedResponse = cleanJsonResponse(result);
     const parsed = JSON.parse(cleanedResponse);
-    
+
     return parsed;
   } catch (error) {
     console.error("Error processing assignment with Gemini:", error);
@@ -1740,17 +1760,17 @@ ${trimmedText}
 async function processRubricPDF(pdfFilePath, providedTotalPoints = null) {
   try {
     console.log(`Processing rubric PDF directly with Gemini: ${pdfFilePath}`);
-    
+
     // Read the PDF file
     const fs = require('fs').promises;
     const fileBuffer = await fs.readFile(pdfFilePath);
     const base64Data = fileBuffer.toString('base64');
-    
+
     const defaultTotalPoints = 100;
     const totalPoints = providedTotalPoints || defaultTotalPoints;
-    
+
     console.log(`Gemini Rubric Processing - Using total points: ${totalPoints}`);
-    
+
     const prompt = `
 Analyze this rubric document and extract the grading criteria information. For each criterion, include:
 1. Question Number: The question or section number associated with the criterion (if available)
@@ -1799,7 +1819,7 @@ Analyze the PDF document and return ONLY a JSON object with this structure.`;
         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
       ],
     });
-    
+
     const contents = [
       {
         parts: [
@@ -1807,7 +1827,7 @@ Analyze the PDF document and return ONLY a JSON object with this structure.`;
           {
             inlineData: {
               mimeType: 'application/pdf',
-              data: base64Data 
+              data: base64Data
             }
           }
         ]
@@ -1815,41 +1835,41 @@ Analyze the PDF document and return ONLY a JSON object with this structure.`;
     ];
 
     console.log(`Sending rubric PDF to Gemini API: ${pdfFilePath}`);
-    
+
     console.log('\n=== RUBRIC PDF PROMPT DEBUG START ===');
     console.log('Prompt being sent to Gemini for Rubric PDF processing:');
     console.log(prompt);
     console.log('=== RUBRIC PDF PROMPT DEBUG END ===\n');
-    
+
     const result = await addToQueue(async () => {
       const start = Date.now();
       const response = await modelConfig.generateContent({ contents });
       console.log(`Gemini PDF processing completed in ${Date.now() - start}ms`);
       return response;
     });
-    
+
     // Check if response exists and has the expected structure
     if (!result || !result.response || !result.response.candidates || !result.response.candidates[0]) {
       throw new Error("Invalid response structure from Gemini API");
     }
-    
+
     const candidate = result.response.candidates[0];
     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
       throw new Error("No content found in Gemini response");
     }
-    
+
     const responseText = candidate.content.parts[0].text;
     console.log(`Gemini rubric response text length: ${responseText ? responseText.length : 0}`);
-    
+
     // Print the full API response for debugging
     console.log('\n=== GEMINI RUBRIC PDF RESPONSE START ===');
     console.log(responseText);
     console.log('=== GEMINI RUBRIC PDF RESPONSE END ===\n');
-    
+
     if (!responseText || responseText.trim() === '') {
       throw new Error("Empty response from Gemini API");
     }
-    
+
     let parsed;
     try {
       const cleanedResponse = cleanJsonResponse(responseText);
@@ -1858,17 +1878,17 @@ Analyze the PDF document and return ONLY a JSON object with this structure.`;
       console.error("Failed to parse JSON response for rubric:", responseText.substring(0, 500));
       throw new Error(`Invalid JSON response from Gemini API: ${jsonError.message}`);
     }
-    
+
     // Ensure the parsed response has the expected structure
     if (!parsed.grading_criteria) {
       parsed.grading_criteria = parsed.criteria || [];
     }
-    
+
     // Make sure total_points is included
     if (!parsed.total_points) {
       parsed.total_points = totalPoints;
     }
-    
+
     return parsed;
   } catch (error) {
     console.error("Error processing rubric PDF with Gemini:", error);
@@ -1897,14 +1917,14 @@ async function processRubric(extractedText, providedTotalPoints = null) {
   try {
     // Limit text size to prevent API timeout issues
     const maxChars = 150000;
-    const trimmedText = extractedText.length > maxChars 
+    const trimmedText = extractedText.length > maxChars
       ? extractedText.substring(0, maxChars) + "... [content truncated]"
       : extractedText;
-    
+
     // First, let the API extract the total points from the PDF text if not provided
     if (providedTotalPoints === null) {
       console.log("No total points provided, attempting to extract from rubric text");
-      
+
       const pointsPrompt = `
 Extract ONLY the total possible points for this assignment from the rubric text. 
 Return ONLY a single number representing the total points.
@@ -1924,7 +1944,7 @@ RETURN ONLY THE NUMERIC VALUE WITH NO EXPLANATION.`;
         console.log("Sending initial request to extract total points");
         const pointsResult = await getGeminiResponse(pointsPrompt, false);
         const extractedPoints = parseInt(pointsResult.trim());
-        
+
         // Check if we got a valid number
         if (!isNaN(extractedPoints) && extractedPoints > 0) {
           console.log(`Successfully extracted total points from rubric text: ${extractedPoints}`);
@@ -1938,12 +1958,12 @@ RETURN ONLY THE NUMERIC VALUE WITH NO EXPLANATION.`;
         providedTotalPoints = 100; // Default if extraction fails
       }
     }
-    
+
     const defaultTotalPoints = 100;
     const totalPoints = providedTotalPoints || defaultTotalPoints;
-    
+
     console.log(`Gemini Rubric Processing - Using total points: ${totalPoints}`);
-    
+
     const prompt = `
 Analyze this rubric document and extract the grading criteria information. For each criterion, include:
 1. Question Number: The question or section number associated with the criterion (if available)
@@ -1985,17 +2005,17 @@ ${trimmedText}
     const result = await getGeminiResponse(prompt, true);
     const cleanedResponse = cleanJsonResponse(result);
     const parsed = JSON.parse(cleanedResponse);
-    
+
     // Ensure the parsed response has the expected structure
     if (!parsed.grading_criteria) {
       parsed.grading_criteria = parsed.criteria || [];
     }
-    
+
     // Make sure total_points is included
     if (!parsed.total_points) {
       parsed.total_points = totalPoints;
     }
-    
+
     return parsed;
   } catch (error) {
     console.error("Error processing rubric with Gemini:", error);
@@ -2022,12 +2042,12 @@ ${trimmedText}
 async function processSolutionPDF(pdfFilePath) {
   try {
     console.log(`Processing solution PDF directly with Gemini: ${pdfFilePath}`);
-    
+
     // Read the PDF file
     const fs = require('fs').promises;
     const fileBuffer = await fs.readFile(pdfFilePath);
     const base64Data = fileBuffer.toString('base64');
-      
+
     const prompt = `
 Analyze this model solution PDF and extract information for each question.
 
@@ -2070,7 +2090,7 @@ Do NOT include any markdown formatting, code blocks, or explanatory text. Return
         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
       ],
     });
-    
+
     const contents = [
       {
         parts: [
@@ -2078,7 +2098,7 @@ Do NOT include any markdown formatting, code blocks, or explanatory text. Return
           {
             inlineData: {
               mimeType: 'application/pdf',
-              data: base64Data 
+              data: base64Data
             }
           }
         ]
@@ -2086,41 +2106,41 @@ Do NOT include any markdown formatting, code blocks, or explanatory text. Return
     ];
 
     console.log(`Sending solution PDF to Gemini API: ${pdfFilePath}`);
-    
+
     console.log('\n=== SOLUTION PDF PROMPT DEBUG START ===');
     console.log('Prompt being sent to Gemini for Solution PDF processing:');
     console.log(prompt);
     console.log('=== SOLUTION PDF PROMPT DEBUG END ===\n');
-    
+
     const result = await addToQueue(async () => {
       const start = Date.now();
       const response = await modelConfig.generateContent({ contents });
       console.log(`Gemini PDF processing completed in ${Date.now() - start}ms`);
       return response;
     });
-    
+
     // Check if response exists and has the expected structure
     if (!result || !result.response || !result.response.candidates || !result.response.candidates[0]) {
       throw new Error("Invalid response structure from Gemini API");
     }
-    
+
     const candidate = result.response.candidates[0];
     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
       throw new Error("No content found in Gemini response");
     }
-    
+
     const responseText = candidate.content.parts[0].text;
     console.log(`Gemini solution response text length: ${responseText ? responseText.length : 0}`);
-    
+
     // Print the full API response for debugging
     console.log('\n=== GEMINI SOLUTION PDF RESPONSE START ===');
     console.log(responseText);
     console.log('=== GEMINI SOLUTION PDF RESPONSE END ===\n');
-    
+
     if (!responseText || responseText.trim() === '') {
       throw new Error("Empty response from Gemini API");
     }
-    
+
     let parsed;
     try {
       const cleanedResponse = cleanJsonResponse(responseText);
@@ -2129,7 +2149,7 @@ Do NOT include any markdown formatting, code blocks, or explanatory text. Return
       console.error("Failed to parse JSON response for solution:", responseText.substring(0, 500));
       throw new Error(`Invalid JSON response from Gemini API: ${jsonError.message}`);
     }
-    
+
     // Validate the response structure
     if (!parsed.questions) {
       console.warn("Gemini response missing 'questions' array. Response:", JSON.stringify(parsed));
@@ -2141,9 +2161,9 @@ Do NOT include any markdown formatting, code blocks, or explanatory text. Return
         parsed = { questions: [] };
       }
     }
-    
+
     console.log(`Successfully parsed solution with ${parsed.questions.length} question(s)`);
-    
+
     return parsed;
   } catch (error) {
     console.error("Error processing solution PDF with Gemini:", error);
@@ -2163,10 +2183,10 @@ async function processSolution(extractedText) {
   try {
     // Limit text size to prevent API timeout issues
     const maxChars = 180000;
-    const trimmedText = extractedText.length > maxChars 
+    const trimmedText = extractedText.length > maxChars
       ? extractedText.substring(0, maxChars) + "... [content truncated]"
       : extractedText;
-      
+
     const prompt = `
 Analyze this model solution and extract for each question:
 1. Question Number: The question number (e.g., "1", "2", "1.1")
@@ -2186,7 +2206,7 @@ ${trimmedText}
     const result = await getGeminiResponse(prompt, true);
     const cleanedResponse = cleanJsonResponse(result);
     const parsed = JSON.parse(cleanedResponse);
-    
+
     return parsed;
   } catch (error) {
     console.error("Error processing solution with Gemini:", error);
@@ -2207,10 +2227,10 @@ async function processSubmission(extractedText, studentId) {
   try {
     // Limit text length for faster processing
     const maxLength = 5000;
-    const truncatedText = extractedText.length > maxLength 
-      ? extractedText.substring(0, maxLength) + "... [content truncated due to length]" 
+    const truncatedText = extractedText.length > maxLength
+      ? extractedText.substring(0, maxLength) + "... [content truncated due to length]"
       : extractedText;
-      
+
     const prompt = `
 Extract the main questions and answers from this student submission.
 For each question, include:
@@ -2223,14 +2243,14 @@ ${truncatedText}
 """`;
 
     console.log(`Sending submission to Gemini API (${truncatedText.length} chars)`);
-    
+
     const result = await getGeminiResponse(prompt, true);
     const cleanedResponse = cleanJsonResponse(result);
     const parsed = JSON.parse(cleanedResponse);
-    
+
     // Add student ID to the result
     parsed.student_id = studentId;
-    
+
     return parsed;
   } catch (error) {
     console.error("Error processing submission with Gemini:", error);
@@ -2256,18 +2276,18 @@ ${truncatedText}
 async function orchestrateAssignmentData(assignmentData, rubricData, solutionData, filePaths = null) {
   try {
     console.log('Starting orchestration of assignment, rubric, and solution data...');
-    
+
     // If file paths are provided and data seems incomplete, re-read the files
     let enhancedAssignmentData = assignmentData;
     let enhancedRubricData = rubricData;
     let enhancedSolutionData = solutionData;
-    
+
     if (filePaths) {
       console.log('File paths provided for potential re-reading:');
       if (filePaths.assignmentPath) console.log('  - Assignment:', filePaths.assignmentPath);
       if (filePaths.rubricPath) console.log('  - Rubric:', filePaths.rubricPath);
       if (filePaths.solutionPath) console.log('  - Solution:', filePaths.solutionPath);
-      
+
       // Re-read assignment if it seems incomplete or if requested
       if (filePaths.assignmentPath && (!assignmentData || !assignmentData.questions || assignmentData.questions.length === 0)) {
         console.log('Re-reading assignment file for better data...');
@@ -2278,7 +2298,7 @@ async function orchestrateAssignmentData(assignmentData, rubricData, solutionDat
           console.warn('Failed to re-read assignment:', error.message);
         }
       }
-      
+
       // Re-read rubric if it seems incomplete or if requested
       if (filePaths.rubricPath && (!rubricData || !rubricData.grading_criteria || rubricData.grading_criteria.length === 0)) {
         console.log('Re-reading rubric file for better data...');
@@ -2289,7 +2309,7 @@ async function orchestrateAssignmentData(assignmentData, rubricData, solutionDat
           console.warn('Failed to re-read rubric:', error.message);
         }
       }
-      
+
       // Re-read solution if it seems incomplete or if requested
       if (filePaths.solutionPath && (!solutionData || !solutionData.questions || solutionData.questions.length === 0)) {
         console.log('Re-reading solution file for better data...');
@@ -2301,7 +2321,7 @@ async function orchestrateAssignmentData(assignmentData, rubricData, solutionDat
         }
       }
     }
-    
+
     // Build a comprehensive prompt for orchestration
     const prompt = `
 You are an educational content orchestrator. Your task is to validate and integrate assignment, rubric, and solution documents to ensure consistency and completeness for automated grading.
@@ -2444,7 +2464,7 @@ IMPORTANT: Your response must be ONLY valid JSON. Ensure all fields are present 
 
     // Call Gemini API with the orchestration prompt
     const responseText = await getGeminiResponse(prompt, true);
-    
+
     // Parse the response
     let orchestratedResult;
     try {
@@ -2457,9 +2477,9 @@ IMPORTANT: Your response must be ONLY valid JSON. Ensure all fields are present 
       console.error('Failed to parse orchestration response:', parseError);
       throw new Error('Invalid JSON response from orchestration');
     }
-    
+
     return orchestratedResult;
-    
+
   } catch (error) {
     console.error('Error during orchestration:', error);
     throw new Error(`Orchestration failed: ${error.message}`);

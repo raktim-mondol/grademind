@@ -175,266 +175,198 @@ router.post('/evaluate', upload.single('file'), async (req, res) => {
   try {
     // Parse config from form data or JSON body
     let config, studentContent;
+    let submissionFilePath = null;
+    let originalFilename = '';
 
     if (req.file) {
-      // File was uploaded - use Landing AI for extraction
       config = JSON.parse(req.body.config || '{}');
-      const filePath = req.file.path;
+      submissionFilePath = req.file.path; // Absolute path to the uploaded file
+      originalFilename = req.file.originalname;
       const fileExtension = path.extname(req.file.originalname).toLowerCase();
 
       console.log(`📄 GradeMind: Processing uploaded file: ${req.file.originalname}`);
-      console.log(`   File path: ${filePath}`);
+      console.log(`   File path: ${submissionFilePath}`);
       console.log(`   File extension: ${fileExtension}`);
 
-      // Check if it's a PDF and Landing AI is configured
-      if (fileExtension === '.pdf' && isLandingAIConfigured()) {
-        console.log('🔄 Using Landing AI to extract PDF content...');
-        try {
-          const extractedContent = await extractWithRetry(filePath);
-          studentContent = formatExtractedContent(extractedContent);
-          console.log(`✅ Landing AI extraction successful. Content length: ${studentContent.length} chars`);
-        } catch (extractError) {
-          console.error('❌ Landing AI extraction failed:', extractError.message);
-          // Fallback: use direct Gemini PDF processing
-          console.log('🔄 Falling back to direct Gemini PDF processing...');
-
-          const model = genAI.getGenerativeModel({ model: config.selectedModels?.[0] || 'gemini-2.5-pro' });
-          const fileBuffer = fs.readFileSync(filePath);
-          const base64File = fileBuffer.toString('base64');
-
-          // Clean up uploaded file
-          fs.unlinkSync(filePath);
-
-          // Call Gemini with the PDF file
-          const prompt = buildEvaluationPrompt(config, '[See attached PDF file]');
-
-          const result = await model.generateContent({
-            contents: [{
-              role: 'user',
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    mimeType: 'application/pdf',
-                    data: base64File
-                  }
-                }
-              ]
-            }],
-            generationConfig: {
-              temperature: 0.1,
-              maxOutputTokens: 2048,
-            },
-          });
-
-          return handleGeminiResponse(res, result, config);
-        }
-      } else if (fileExtension === '.pdf') {
-        console.log('⚠️ Landing AI not configured - falling back to direct Gemini PDF processing');
-        // For PDFs without Landing AI, we'll send the file to Gemini directly
-        studentContent = `[PDF file uploaded: ${req.file.originalname}. Please evaluate based on the file content.]`;
-
-        // Use Gemini's file processing capability
-        const model = genAI.getGenerativeModel({ model: config.selectedModels?.[0] || 'gemini-2.5-pro' });
-        const fileBuffer = fs.readFileSync(filePath);
-        const base64File = fileBuffer.toString('base64');
-
-        // Clean up uploaded file
-        fs.unlinkSync(filePath);
-
-        // Call Gemini with the PDF file
-        const prompt = buildEvaluationPrompt(config, '[See attached PDF file]');
-
-        const result = await model.generateContent({
-          contents: [{
-            role: 'user',
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: 'application/pdf',
-                  data: base64File
-                }
-              }
-            ]
-          }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 2048,
-          },
-        });
-
-        return handleGeminiResponse(res, result, config);
-      } else {
-        // Text file - read directly
-        studentContent = fs.readFileSync(filePath, 'utf-8');
-        console.log(`📝 Read text file. Content length: ${studentContent.length} chars`);
-      }
-
-      // Clean up uploaded file
-      fs.unlinkSync(filePath);
+      // We no longer rely on Landing AI for PDF extraction for the main evaluation flow
+      // The evaluateSubmission service handles direct PDF/IPYNB processing multimodally
     } else {
       // No file - use JSON body
       config = req.body.config;
       studentContent = req.body.studentContent;
-    }
-
-    if (!config || !studentContent) {
-      return res.status(400).json({ error: 'Missing config or studentContent' });
-    }
-
-    // Rate limiting
-    const now = Date.now();
-    const timeSinceLastCall = now - lastCallTime;
-    if (timeSinceLastCall < RATE_LIMIT_DELAY) {
-      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY - timeSinceLastCall));
-    }
-    lastCallTime = Date.now();
-
-    // Build the prompt
-    const prompt = buildEvaluationPrompt(config, studentContent);
-
-    // Get selected models (default to gemini-2.5-pro)
-    const selectedModels = config.selectedModels?.length > 0
-      ? config.selectedModels
-      : ['gemini-2.5-pro'];
-
-    const useAverageGrading = config.useAverageGrading && selectedModels.length > 1;
-
-    console.log(`📤 Sending evaluation request to Gemini`);
-    console.log(`   Models: ${selectedModels.join(', ')}`);
-    console.log(`   Average grading: ${useAverageGrading}`);
-    console.log(`   Content length: ${studentContent.length} chars`);
-
-    // If using average grading, call all models and average results
-    if (useAverageGrading) {
-      console.log(`🔄 Running evaluation with ${selectedModels.length} models for averaging...`);
-
-      const evaluations = [];
-      const modelResults = {};
-
-      for (const modelName of selectedModels) {
-        try {
-          // Rate limiting between model calls
-          const now = Date.now();
-          const timeSinceLastCall = now - lastCallTime;
-          if (timeSinceLastCall < RATE_LIMIT_DELAY) {
-            await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY - timeSinceLastCall));
-          }
-          lastCallTime = Date.now();
-
-          const model = genAI.getGenerativeModel({
-            model: modelName,
-            generationConfig: {
-              temperature: 0.1,
-              maxOutputTokens: 8192,
-              responseMimeType: "application/json",
-            },
-          });
-
-          console.log(`   📤 Calling model: ${modelName}`);
-          const result = await model.generateContent({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          });
-
-          const responseText = result.response.text();
-          let evaluation;
-
-          try {
-            evaluation = JSON.parse(responseText.trim());
-          } catch (parseError) {
-            // Try to extract JSON from code blocks
-            const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
-            if (codeBlockMatch) {
-              evaluation = JSON.parse(codeBlockMatch[1].trim());
-            } else {
-              const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                evaluation = JSON.parse(jsonMatch[0]);
-              } else {
-                throw parseError;
-              }
-            }
-          }
-
-          evaluations.push(evaluation);
-          modelResults[modelName] = evaluation.score;
-          console.log(`   ✅ ${modelName}: ${evaluation.score}/${evaluation.maxScore || config.totalScore || 100}`);
-        } catch (modelError) {
-          console.error(`   ❌ ${modelName} failed:`, modelError.message);
-          // Continue with other models
-        }
+      // If student content is provided as text, we might need a way to pass it to the service
+      // But the service primarily expects a file path.
+      // For text-only submissions, we'll write a temporary file
+      if (studentContent) {
+        const tempPath = path.join(__dirname, '..', 'uploads', `temp-text-${Date.now()}.txt`);
+        fs.writeFileSync(tempPath, studentContent);
+        submissionFilePath = tempPath;
+        originalFilename = 'text-submission.txt';
       }
+    }
 
-      if (evaluations.length === 0) {
-        return res.status(500).json({
-          error: 'All models failed to evaluate',
-          details: 'No successful evaluations from any selected model'
-        });
-      }
+    if (!config || !submissionFilePath) {
+      return res.status(400).json({ error: 'Missing config or student submission (file or text)' });
+    }
 
-      // Average the scores
-      const avgScore = Math.round(evaluations.reduce((sum, e) => sum + e.score, 0) / evaluations.length);
-      const maxScore = config.totalScore || 100;
+    // --- Prepare Data Structures for geminiService ---
 
-      // Combine feedback from all models
-      const combinedStrengths = [...new Set(evaluations.flatMap(e => e.strengths || []))];
-      const combinedWeaknesses = [...new Set(evaluations.flatMap(e => e.weaknesses || []))];
+    // 1. Assignment Data
+    const assignmentData = {
+      title: config.title,
+      description: config.description,
+      totalPoints: config.totalScore || 100,
+      questionStructure: [] // Can be populated if config has it, otherwise service handles it
+    };
 
-      // Use the most common letter grade
-      const grades = evaluations.map(e => e.letterGrade).filter(Boolean);
-      const gradeCount = grades.reduce((acc, g) => {
-        acc[g] = (acc[g] || 0) + 1;
-        return acc;
-      }, {});
-      const avgGrade = Object.entries(gradeCount).sort((a, b) => b[1] - a[1])[0]?.[0] || 'C';
-
-      // Combine lost marks from all evaluations
-      const allLostMarks = evaluations.flatMap(e => e.lostMarks || []);
-
-      const averagedEvaluation = {
-        score: avgScore,
-        maxScore: maxScore,
-        letterGrade: avgGrade,
-        feedback: `Average score from ${evaluations.length} models. ${evaluations[0]?.feedback || ''}`,
-        strengths: combinedStrengths.slice(0, 5),
-        weaknesses: combinedWeaknesses.slice(0, 5),
-        actionableTips: evaluations[0]?.actionableTips || 'Continue practicing and refining your work.',
-        lostMarks: allLostMarks,
-        modelScores: modelResults,
-        modelsUsed: selectedModels.filter(m => modelResults[m] !== undefined)
+    // 2. Rubric Data
+    // The service expects a structured object. If config.rubric is text, we'll pass it 
+    // but ideally we should parse it. The service typically handles PDF rubrics.
+    // Here we'll construct a basic rubric object or pass null if it's just text
+    let rubricData = null;
+    if (config.rubric) {
+      // If it's a PDF upload (not supported in this specific route payload yet, but might be linked)
+      // For now, we put the text rubric into the assignment description or handled by service
+      // The service uses rubricData.grading_criteria.
+      // We'll create a dummy structure if we have text-based rubric to influence the prompt
+      rubricData = {
+        grading_criteria: [], // We don't have parsed criteria from text
+        raw_text: config.rubric // Pass raw text if needed (service might need update to use this)
       };
-
-      console.log(`✅ Averaged evaluation complete: ${avgScore}/${maxScore}`);
-      console.log(`   Individual scores: ${JSON.stringify(modelResults)}`);
-
-      return res.json(averagedEvaluation);
+      // The service logic in geminiService.js checks for rubricData.grading_criteria length
+      // If 0, it falls back to assignment instructions.
+      // We will append the rubric text to the assignment description to ensure it's used
+      assignmentData.description += `\n\nRUBRIC:\n${config.rubric}`;
     }
 
-    // Single model evaluation
-    const modelName = selectedModels[0];
-    const model = genAI.getGenerativeModel({
-      model: modelName,
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 8192,
-        responseMimeType: "application/json",
-      },
-    });
+    // 3. Solution Data
+    let solutionData = null;
+    if (config.solution) {
+      // Similar strategy: append to description if not structured
+      // Or pass as a simple object if service supports it (service checks solutionData.questions)
+      assignmentData.description += `\n\nMODEL SOLUTION:\n${config.solution}`;
+    }
 
-    console.log(`📤 Single model evaluation: ${modelName}`);
+    // Call the robust evaluation service
+    const { evaluateSubmission } = require('../utils/geminiService');
 
-    // Call Gemini
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    });
+    // Note: evaluateSubmission expects (assignmentData, rubricData, solutionData, submissionFilePath, studentId)
+    // It handles the Gemini API call, retries, and formatting.
 
-    return handleGeminiResponse(res, result, config);
+    console.log(`🔄 calling evaluateSubmission from geminiService...`);
+    const result = await evaluateSubmission(
+      assignmentData,
+      rubricData,
+      solutionData,
+      submissionFilePath,
+      'student', // generic ID
+      null, // orchestratedData
+      config.title,
+      config.description // Passing explicit description just in case
+    );
+
+    // Initial clean up of temp text file if created
+    if (req.body.studentContent && submissionFilePath && fs.existsSync(submissionFilePath)) {
+      fs.unlinkSync(submissionFilePath);
+    }
+
+    // Cleanup of uploaded file is handled inside evaluateSubmission (for .ipynb -> pdf conversion artifacts)
+    // BUT checking geminiService.js, it cleans up "temporary PDF file if created from .ipynb".
+    // It does NOT clean up the original PDF passed to it (which is good).
+    // However, multer uploaded this file. We should clean it up after we are done.
+    if (req.file && fs.existsSync(submissionFilePath)) {
+      // We can delete it now as the service reads it into buffer/uploads to Gemini
+      console.log(`🧹 Cleaning up uploaded file: ${submissionFilePath}`);
+      fs.unlinkSync(submissionFilePath);
+    }
+
+    if (result.processingError) {
+      return res.status(500).json({
+        error: 'Evaluation failed',
+        details: result.processingError,
+        // partial results might be available
+        score: result.overallGrade,
+        feedback: result.processingError
+      });
+    }
+
+    // Transform result to match what the frontend expects (if different)
+    // Frontend expects: { score, maxScore, letterGrade, feedback, strengths, weaknesses, actionableTips, lostMarks }
+    // geminiService returns: { overallGrade, totalPossible, criteriaGrades, questionScores, strengths, areasForImprovement, suggestions }
+
+    // Map service result to frontend response
+    const frontendResponse = {
+      score: result.overallGrade,
+      maxScore: result.totalPossible,
+      letterGrade: calculateLetterGrade(result.overallGrade, result.totalPossible),
+      feedback: generateOverallFeedback(result),
+      strengths: result.strengths || [],
+      weaknesses: result.areasForImprovement || [],
+      actionableTips: result.suggestions ? result.suggestions[0] : 'Review the feedback details.',
+      lostMarks: mapLostMarks(result.questionScores)
+    };
+
+    return res.json(frontendResponse);
+
   } catch (error) {
     console.error('❌ GradeMind evaluation error:', error);
+    // clean up file if it exists and error happened
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
     res.status(500).json({ error: error.message });
   }
 });
+
+// Helper to map letter grade
+function calculateLetterGrade(score, total) {
+  const percentage = (score / total) * 100;
+  if (percentage >= 90) return 'A';
+  if (percentage >= 80) return 'B';
+  if (percentage >= 70) return 'C';
+  if (percentage >= 60) return 'D';
+  return 'F';
+}
+
+// Helper to generate summary feedback
+function generateOverallFeedback(result) {
+  // If criteriaGrades exist, summarize them
+  if (result.criteriaGrades && result.criteriaGrades.length > 0) {
+    return result.criteriaGrades.map(cg => `${cg.criterionName}: ${cg.score}/${cg.maxScore}`).join('. ');
+  }
+  // usage questionScores if available
+  if (result.questionScores && result.questionScores.length > 0) {
+    return result.questionScores.map(qs => `Q${qs.questionNumber}: ${qs.earnedScore}/${qs.maxScore}`).join('. ');
+  }
+  return "Evaluation completed.";
+}
+
+// Helper to map question scores to lost marks format
+function mapLostMarks(questionScores) {
+  if (!questionScores) return [];
+  const lost = [];
+  questionScores.forEach(qs => {
+    if (qs.earnedScore < qs.maxScore) {
+      lost.push({
+        area: `Question ${qs.questionNumber}`,
+        pointsLost: qs.maxScore - qs.earnedScore,
+        reason: qs.feedback || 'Incorrect or incomplete answer'
+      });
+    }
+    if (qs.subsections) {
+      qs.subsections.forEach(sub => {
+        if (sub.earnedScore < sub.maxScore) {
+          lost.push({
+            area: `Question ${qs.questionNumber}${sub.subsectionNumber}`,
+            pointsLost: sub.maxScore - sub.earnedScore,
+            reason: sub.feedback || 'Partial deduction'
+          });
+        }
+      });
+    }
+  });
+  return lost;
+}
 
 // Save grademind evaluation result as a Submission document
 router.post('/save-result', async (req, res) => {
@@ -491,6 +423,9 @@ router.post('/save-result', async (req, res) => {
       existingSubmission.evaluationStatus = 'completed';
       existingSubmission.processingStatus = 'completed';
       existingSubmission.evaluationCompletedAt = new Date();
+      if (sectionName) {
+        existingSubmission.sectionName = sectionName;
+      }
 
       await existingSubmission.save();
       console.log(`✅ Updated grademind submission for ${studentName}`);
@@ -503,6 +438,7 @@ router.post('/save-result', async (req, res) => {
       studentId: studentId || studentName,
       studentName: studentName,
       submissionFile: `grademind-${sectionName || 'default'}-${studentName}`,
+      sectionName: sectionName || 'Default Section',
       processingStatus: 'completed',
       evaluationStatus: 'completed',
       evaluationCompletedAt: new Date(),

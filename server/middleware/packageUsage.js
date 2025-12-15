@@ -1,8 +1,6 @@
 const User = require('../models/user');
 const Assignment = require('../models/assignment');
-const Project = require('../models/project');
-const Submission = require('../models/submission');
-const ProjectSubmission = require('../models/projectSubmission');
+
 
 /**
  * Middleware to check if user can create an assignment
@@ -21,7 +19,7 @@ const checkAssignmentLimit = async (req, res, next) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const currentCount = await Assignment.countDocuments({ userId });
+    const currentCount = user.usage.lifetimeAssignmentsCreated || 0;
     const check = user.canPerformAction('create_assignment', currentCount);
 
     if (!check.allowed) {
@@ -58,7 +56,7 @@ const checkSubmissionLimit = async (req, res, next) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const currentCount = await Submission.countDocuments({ assignmentId });
+    const currentCount = user.usage.lifetimeSubmissionsChecked || 0;
     const check = user.canPerformAction('grade_submission', currentCount);
 
     if (!check.allowed) {
@@ -78,78 +76,7 @@ const checkSubmissionLimit = async (req, res, next) => {
   }
 };
 
-/**
- * Middleware to check if user can create a project
- */
-const checkProjectLimit = async (req, res, next) => {
-  try {
-    const userId = req.user?.id || req.body.userId;
 
-    if (!userId) {
-      return next();
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const currentCount = await Project.countDocuments({ userId });
-    const check = user.canPerformAction('create_project', currentCount);
-
-    if (!check.allowed) {
-      return res.status(403).json({
-        error: check.reason,
-        limit: check.limit,
-        current: check.current,
-        upgradeRequired: true
-      });
-    }
-
-    req.packageUser = user;
-    next();
-  } catch (error) {
-    console.error('❌ Error checking project limit:', error);
-    res.status(500).json({ error: 'Failed to check package limits' });
-  }
-};
-
-/**
- * Middleware to check if user can submit a project submission
- */
-const checkProjectSubmissionLimit = async (req, res, next) => {
-  try {
-    const projectId = req.params.projectId || req.body.projectId;
-    const userId = req.user?.id || req.body.userId;
-
-    if (!userId || !projectId) {
-      return next();
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const currentCount = await ProjectSubmission.countDocuments({ projectId });
-    const check = user.canPerformAction('grade_project_submission', currentCount);
-
-    if (!check.allowed) {
-      return res.status(403).json({
-        error: check.reason,
-        limit: check.limit,
-        current: check.current,
-        upgradeRequired: true
-      });
-    }
-
-    req.packageUser = user;
-    next();
-  } catch (error) {
-    console.error('❌ Error checking project submission limit:', error);
-    res.status(500).json({ error: 'Failed to check package limits' });
-  }
-};
 
 /**
  * Middleware to check if user has access to a feature
@@ -194,7 +121,7 @@ const trackActivity = (action, resourceType) => {
     const originalJson = res.json.bind(res);
 
     // Override json method to track after success
-    res.json = async function(data) {
+    res.json = async function (data) {
       // Only track on success
       if (res.statusCode >= 200 && res.statusCode < 300) {
         try {
@@ -215,12 +142,6 @@ const trackActivity = (action, resourceType) => {
                   break;
                 case 'submission_graded':
                   await user.incrementUsage('totalSubmissionsGraded');
-                  break;
-                case 'project_created':
-                  await user.incrementUsage('projectsCreated');
-                  break;
-                case 'project_submission_graded':
-                  await user.incrementUsage('projectSubmissionsGraded');
                   break;
               }
             }
@@ -244,7 +165,7 @@ const trackDeletion = (usageField) => {
   return async (req, res, next) => {
     const originalJson = res.json.bind(res);
 
-    res.json = async function(data) {
+    res.json = async function (data) {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         try {
           const userId = req.user?.id || req.body.userId;
@@ -269,8 +190,6 @@ const trackDeletion = (usageField) => {
 module.exports = {
   checkAssignmentLimit,
   checkSubmissionLimit,
-  checkProjectLimit,
-  checkProjectSubmissionLimit,
   checkFeatureAccess,
   trackActivity,
   trackDeletion

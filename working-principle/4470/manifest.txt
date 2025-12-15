@@ -1,0 +1,29 @@
+The requested files for download id 49126e01-b2a1-4774-b0a1-80faebae0298 are now available 
+ 
+Number of files requested: 22 
+Success file count: 22 
+Failed file count: 0 
+ 
+Files
+2808091219 - Yian Zhu - 2680858_Yian_Zhu_assignment2_8279939_843079499.ipynb - SUCCESS 
+2816471996 - Hanchao Xie - 2660068_Hanchao_Xie_Assignment2_8279939_1050553429.ipynb - SUCCESS 
+2809697184 - Boyang Zhang - 2764095_Boyang_Zhang_z5598846_BoyangZhang_8279939_1799013120.ipynb - SUCCESS 
+2810531363 - Xinhao Luo - 2660417_Xinhao_Luo_ass2_8279939_1849233277.ipynb - SUCCESS 
+2810656221 - Xincheng Hao - 2762746_Xincheng_Hao_z5597528-Xincheng-Hao.ipynb_8279939_766676484.ipynb - SUCCESS 
+2810874407 - Zhicheng Hu - 2672387_Zhicheng_Hu_z5512539_Zhicheng_Hu_8279939_216028464.ipynb - SUCCESS 
+2806832817 - Martin Peng - 2744791_Martin_Peng_z5580411_8279939_2111805061.ipynb - SUCCESS 
+2807262803 - Ronan Dsouza - 2729822_Ronan_Dsouza_z5565382-Ronan-Dsouza_8279939_832561930.ipynb - SUCCESS 
+2811624956 - Mingrui Lin - 2713091_Mingrui_Lin_z5547873_Mingrui_Lin_8279939_1348126344.ipynb - SUCCESS 
+2807595304 - Chong Liu - 2704106_Chong_Liu_Assignment2-Notebook_8279939_1621330469.ipynb - SUCCESS 
+2812059810 - Divya Tyagi - 2675337_Divya_Tyagi_Ass2_8279939_346575046.ipynb - SUCCESS 
+2813267662 - Charlie Griffith - 2797989_Charlie_Griffith_Charlie_Griffith_Assignment_2_COMP9414_8279939_602675060.ipynb - SUCCESS 
+2813490470 - Haodong Wei - 2662945_Haodong_Wei_z5503884_ass2_8279939_1254268675.ipynb - SUCCESS 
+2813497077 - Ruizhe Wang - 2760255_Ruizhe_Wang_assignment2_8279939_1987046667.ipynb - SUCCESS 
+2813826280 - Haikun Ping - 2784382_Haikun_Ping_z5617152-haikun-ping_8279939_1420150411.ipynb - SUCCESS 
+2813809883 - Xianze Li - 2792068_Xianze_Li_z5623960-Xianze-Li-Assignment_2_8279939_1228520783.ipynb - SUCCESS 
+2819240738 - Junji Duan - 2808647_Junji_Duan_z5638051_Junji_Duan_8279939_1054363625.ipynb - SUCCESS 
+2814117500 - Songning Liu - 2842901_Songning_Liu_Assignment_2_-_notebook_-_z5668551_8279939_1983350368.ipynb - SUCCESS 
+2814207541 - Chen Wang - 2798430_Chen_Wang_z5629478-Chen-WANG_8279939_1484591340.ipynb - SUCCESS 
+2814279060 - Anson Cheng - 2500771_Anson_Cheng_Assignment_2_8279939_341818222.ipynb - SUCCESS 
+2815207042 - Michael Pham - 45218_Michael_Pham_z3332615_-_Michael_Pham_8279939_946738274.ipynb - SUCCESS 
+2815699014 - Zijun Tao - 2774578_Zijun_Tao_z5608581-zijun-tao_8279939_1033184466.ipynb - SUCCESS 

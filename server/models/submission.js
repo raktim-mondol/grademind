@@ -16,9 +16,20 @@ const submissionSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  sectionName: {
+    type: String,
+    required: false,
+    trim: true,
+    default: 'Default Section'
+  },
   submissionFile: {
     type: String,
     required: true
+  },
+  originalFileName: {
+    type: String,
+    trim: true
+    // Stores the original filename for duplicate detection
   },
   comments: {
     type: String,

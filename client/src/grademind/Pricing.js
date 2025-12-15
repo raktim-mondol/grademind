@@ -9,10 +9,10 @@ const Pricing = ({ onSelectPlan, onBack }) => {
           className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
           onClick={onBack}
         >
-          <div className="w-6 h-6 bg-black rounded-sm flex items-center justify-center">
-            <Check className="w-4 h-4 text-white" />
+          <div className="w-6 h-6 bg-white border-2 border-black rounded-sm flex items-center justify-center">
+            <Check className="w-4 h-4 text-black" strokeWidth={3} />
           </div>
-          <span className="font-semibold text-lg tracking-tight">grademind.ai</span>
+          <span className="font-bold text-lg tracking-tight">GradeMind.ai</span>
         </button>
         <button onClick={onBack} className="text-sm font-medium text-zinc-500 hover:text-black transition-colors flex items-center gap-1">
           <ChevronLeft className="w-4 h-4" /> Back
@@ -82,10 +82,10 @@ const Pricing = ({ onSelectPlan, onBack }) => {
             </button>
             <div className="space-y-4 flex-1">
               <div className="flex items-center gap-3 text-sm text-zinc-700">
-                <Check className="w-4 h-4 text-zinc-900" /> Unlimited Workspaces
+                <Check className="w-4 h-4 text-zinc-900" /> 3 Active Workspaces
               </div>
               <div className="flex items-center gap-3 text-sm text-zinc-700">
-                <Check className="w-4 h-4 text-zinc-900" /> Unlimited Students
+                <Check className="w-4 h-4 text-zinc-900" /> Up to 100 Students
               </div>
               <div className="flex items-center gap-3 text-sm text-zinc-700">
                 <Check className="w-4 h-4 text-zinc-900" /> Priority AI Processing

@@ -48,7 +48,7 @@ const assignmentSchema = new mongoose.Schema({
   dueDate: {
     type: Date,
     required: false,
-    default: () => new Date(+new Date() + 7*24*60*60*1000)
+    default: () => new Date(+new Date() + 7 * 24 * 60 * 60 * 1000)
   },
   assignmentFile: {
     type: String,
@@ -82,9 +82,22 @@ const assignmentSchema = new mongoose.Schema({
     type: [sectionSchema],
     default: []
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
+  // Enhanced grading fields matching working-principle JSONs
+  questionsData: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  rubricData: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  solutionData: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  gradingSystemPrompt: {
+    type: String,
+    default: ''
   },
   // Processing status fields
   processingStatus: {
@@ -165,7 +178,7 @@ const assignmentSchema = new mongoose.Schema({
     warnings: [String],
     suggestions: [String]
   }
-});
+}, { timestamps: true });
 
 const Assignment = mongoose.model('Assignment', assignmentSchema);
 

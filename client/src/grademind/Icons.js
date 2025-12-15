@@ -33,7 +33,13 @@ import {
   Menu,
   Code,
   FileCode,
-  FolderCode
+  FolderCode,
+  Terminal,
+  AlertTriangle,
+  TrendingUp,
+  Target,
+  Gauge,
+  PieChart
 } from 'lucide-react';
 
 export {
@@ -71,5 +77,11 @@ export {
   Menu,
   Code,
   FileCode,
-  FolderCode
+  FolderCode,
+  Terminal,
+  AlertTriangle,
+  TrendingUp,
+  Target,
+  Gauge,
+  PieChart
 };

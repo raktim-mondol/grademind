@@ -1,1 +1,22 @@
-{"short_name": "EduGrade", "name": "EduGrade - Assignment Evaluation System", "icons": [{"src": "favicon.ico", "sizes": "64x64 32x32 24x24 16x16", "type": "image/x-icon"}], "start_url": ".", "display": "standalone", "theme_color": "#000000", "background_color": "#ffffff"}
+{
+    "short_name": "GradeMind",
+    "name": "GradeMind - AI-Powered Grading",
+    "description": "Automated grading system for educators powered by AI",
+    "icons": [
+        {
+            "src": "favicon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable"
+        }
+    ],
+    "start_url": ".",
+    "display": "standalone",
+    "theme_color": "#18181b",
+    "background_color": "#ffffff",
+    "orientation": "portrait-primary",
+    "categories": [
+        "education",
+        "productivity"
+    ]
+}

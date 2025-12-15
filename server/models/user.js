@@ -2,72 +2,60 @@ const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
 // Package definitions with limits
+// Package definitions with limits
 const PACKAGE_LIMITS = {
   free: {
-    maxAssignments: 3,
-    maxSubmissionsPerAssignment: 10,
-    maxProjects: 1,
-    maxProjectSubmissions: 5,
+    maxAssignments: 1, // Active limit (kept for backward compatibility or display)
+    maxLifetimeAssignments: 1, // STRICT LIFETIME LIMIT
+    maxSubmissionsPerAssignment: 20, // This seems to be "per assignment" in old code, but requirement is TOTAL. Using 20 as placeholder for "safety" per assignment if needed, but main check will be lifetime.
+    maxLifetimeSubmissions: 20, // STRICT LIFETIME LIMIT (Total across all assignments)
     features: ['basic_grading']
   },
-  basic: {
+  basic: { // Kept for legacy/intermediate, assuming slightly better than free? Or deprecated? Leaving as is but adding lifetime placeholders.
     maxAssignments: 10,
+    maxLifetimeAssignments: 10,
     maxSubmissionsPerAssignment: 50,
-    maxProjects: 5,
-    maxProjectSubmissions: 25,
+    maxLifetimeSubmissions: 100,
     features: ['basic_grading', 'excel_export']
   },
   pro: {
-    maxAssignments: 50,
-    maxSubmissionsPerAssignment: 200,
-    maxProjects: 25,
-    maxProjectSubmissions: 100,
+    maxAssignments: 3,
+    maxLifetimeAssignments: 3,
+    maxSubmissionsPerAssignment: 100,
+    maxLifetimeSubmissions: 100,
     features: ['basic_grading', 'excel_export', 'orchestration', 'priority_processing']
   },
   enterprise: {
-    maxAssignments: -1, // unlimited
+    maxAssignments: -1,
+    maxLifetimeAssignments: -1,
     maxSubmissionsPerAssignment: -1,
-    maxProjects: -1,
-    maxProjectSubmissions: -1,
+    maxLifetimeSubmissions: -1,
     features: ['basic_grading', 'excel_export', 'orchestration', 'priority_processing', 'api_access', 'custom_branding']
   }
 };
 
 const UsageSchema = new Schema({
-  assignmentsCreated: {
-    type: Number,
-    default: 0
-  },
-  totalSubmissionsGraded: {
-    type: Number,
-    default: 0
-  },
-  projectsCreated: {
-    type: Number,
-    default: 0
-  },
-  projectSubmissionsGraded: {
-    type: Number,
-    default: 0
-  },
-  lastActivityDate: {
-    type: Date,
-    default: Date.now
-  }
+  assignmentsCreated: { type: Number, default: 0 },
+  lifetimeAssignmentsCreated: { type: Number, default: 0 }, // NEW: Track total created ever
+
+  totalSubmissionsGraded: { type: Number, default: 0 },
+
+
+  lastActivityDate: { type: Date, default: Date.now }
 }, { _id: false });
 
 const ActivityLogSchema = new Schema({
   action: {
     type: String,
     required: true,
-    enum: ['assignment_created', 'assignment_deleted', 'submission_graded', 'project_created', 'project_deleted', 'project_submission_graded', 'excel_exported', 'orchestration_run']
+    enum: ['assignment_created', 'assignment_deleted', 'submission_graded', 'excel_exported', 'orchestration_run']
   },
   resourceId: {
     type: Schema.Types.ObjectId
   },
   resourceType: {
     type: String,
-    enum: ['assignment', 'submission', 'project', 'project_submission']
+    enum: ['assignment', 'submission']
   },
   timestamp: {
     type: Date,
@@ -141,12 +129,12 @@ const UserSchema = new Schema({
 });
 
 // Method to get package limits
-UserSchema.methods.getPackageLimits = function() {
+UserSchema.methods.getPackageLimits = function () {
   return PACKAGE_LIMITS[this.package.type] || PACKAGE_LIMITS.free;
 };
 
 // Method to check if user can perform action
-UserSchema.methods.canPerformAction = function(action, currentCount = 0) {
+UserSchema.methods.canPerformAction = function (action, currentCount = 0) {
   const limits = this.getPackageLimits();
 
   // Check if package is active
@@ -161,52 +149,36 @@ UserSchema.methods.canPerformAction = function(action, currentCount = 0) {
 
   switch (action) {
     case 'create_assignment':
-      if (limits.maxAssignments === -1) return { allowed: true };
-      if (currentCount >= limits.maxAssignments) {
+      if (limits.maxLifetimeAssignments === -1) return { allowed: true };
+
+      // Check Lifetime limit
+      if (this.usage.lifetimeAssignmentsCreated >= limits.maxLifetimeAssignments) {
         return {
           allowed: false,
-          reason: `Assignment limit reached (${limits.maxAssignments}). Upgrade your package for more.`,
-          limit: limits.maxAssignments,
-          current: currentCount
+          reason: `Lifetime assignment limit reached (${limits.maxLifetimeAssignments}). This limit persists even if you delete assignments. Upgrade package for more.`,
+          limit: limits.maxLifetimeAssignments,
+          current: this.usage.lifetimeAssignmentsCreated
         };
       }
       return { allowed: true };
 
     case 'grade_submission':
-      if (limits.maxSubmissionsPerAssignment === -1) return { allowed: true };
-      if (currentCount >= limits.maxSubmissionsPerAssignment) {
-        return {
-          allowed: false,
-          reason: `Submission limit per assignment reached (${limits.maxSubmissionsPerAssignment}). Upgrade your package for more.`,
-          limit: limits.maxSubmissionsPerAssignment,
-          current: currentCount
-        };
-      }
-      return { allowed: true };
-
-    case 'create_project':
-      if (limits.maxProjects === -1) return { allowed: true };
-      if (currentCount >= limits.maxProjects) {
-        return {
-          allowed: false,
-          reason: `Project limit reached (${limits.maxProjects}). Upgrade your package for more.`,
-          limit: limits.maxProjects,
-          current: currentCount
-        };
-      }
-      return { allowed: true };
-
     case 'grade_project_submission':
-      if (limits.maxProjectSubmissions === -1) return { allowed: true };
-      if (currentCount >= limits.maxProjectSubmissions) {
+      // Unified submission checking limit
+      if (limits.maxLifetimeSubmissions === -1) return { allowed: true };
+
+      if (this.usage.lifetimeSubmissionsChecked >= limits.maxLifetimeSubmissions) {
         return {
           allowed: false,
-          reason: `Project submission limit reached (${limits.maxProjectSubmissions}). Upgrade your package for more.`,
-          limit: limits.maxProjectSubmissions,
-          current: currentCount
+          reason: `Lifetime student submission checking limit reached (${limits.maxLifetimeSubmissions}). This limit includes all assignments and projects and persists even if deleted. Upgrade package to increase limit.`,
+          limit: limits.maxLifetimeSubmissions,
+          current: this.usage.lifetimeSubmissionsChecked
         };
       }
+
       return { allowed: true };
+
+
 
     default:
       return { allowed: true };
@@ -214,13 +186,13 @@ UserSchema.methods.canPerformAction = function(action, currentCount = 0) {
 };
 
 // Method to check if feature is available
-UserSchema.methods.hasFeature = function(feature) {
+UserSchema.methods.hasFeature = function (feature) {
   const limits = this.getPackageLimits();
   return limits.features.includes(feature);
 };
 
 // Method to log activity
-UserSchema.methods.logActivity = async function(action, resourceId, resourceType, details = {}) {
+UserSchema.methods.logActivity = async function (action, resourceId, resourceType, details = {}) {
   const activity = {
     action,
     resourceId,
@@ -241,16 +213,27 @@ UserSchema.methods.logActivity = async function(action, resourceId, resourceType
 };
 
 // Method to increment usage counter
-UserSchema.methods.incrementUsage = async function(field) {
+UserSchema.methods.incrementUsage = async function (field) {
   if (this.usage[field] !== undefined) {
-    this.usage[field] += 1;
+    this.usage[field] += 1; // Increment active count
+
+    // Also increment lifetime counters
+    if (field === 'assignmentsCreated') {
+      this.usage.lifetimeAssignmentsCreated = (this.usage.lifetimeAssignmentsCreated || 0) + 1;
+
+    } else if (field === 'totalSubmissionsGraded') {
+      // Both contribute to the single lifetime submissions counter
+      this.usage.lifetimeSubmissionsChecked = (this.usage.lifetimeSubmissionsChecked || 0) + 1;
+    }
+
     this.usage.lastActivityDate = new Date();
     await this.save();
   }
 };
 
 // Method to decrement usage counter
-UserSchema.methods.decrementUsage = async function(field) {
+UserSchema.methods.decrementUsage = async function (field) {
+  // Only decrement ACTIVE usage, never lifetime usage
   if (this.usage[field] !== undefined && this.usage[field] > 0) {
     this.usage[field] -= 1;
     await this.save();
@@ -258,7 +241,7 @@ UserSchema.methods.decrementUsage = async function(field) {
 };
 
 // Method to get usage summary
-UserSchema.methods.getUsageSummary = function() {
+UserSchema.methods.getUsageSummary = function () {
   const limits = this.getPackageLimits();
 
   return {
@@ -267,17 +250,17 @@ UserSchema.methods.getUsageSummary = function() {
     expiresAt: this.package.endDate,
     usage: {
       assignments: {
-        used: this.usage.assignmentsCreated,
-        limit: limits.maxAssignments,
-        remaining: limits.maxAssignments === -1 ? 'unlimited' : Math.max(0, limits.maxAssignments - this.usage.assignmentsCreated)
+        used: this.usage.assignmentsCreated, // Active count (for info)
+        lifetimeUsed: this.usage.lifetimeAssignmentsCreated || 0, // NEW: Lifetime count
+        limit: limits.maxLifetimeAssignments, // Display lifetime limit
+        remaining: limits.maxLifetimeAssignments === -1 ? 'unlimited' : Math.max(0, limits.maxLifetimeAssignments - (this.usage.lifetimeAssignmentsCreated || 0))
       },
-      projects: {
-        used: this.usage.projectsCreated,
-        limit: limits.maxProjects,
-        remaining: limits.maxProjects === -1 ? 'unlimited' : Math.max(0, limits.maxProjects - this.usage.projectsCreated)
-      },
-      totalSubmissionsGraded: this.usage.totalSubmissionsGraded,
-      totalProjectSubmissionsGraded: this.usage.projectSubmissionsGraded
+      submissions: {
+        totalGraded: this.usage.totalSubmissionsGraded,
+        lifetimeUsed: this.usage.lifetimeSubmissionsChecked || 0,
+        limit: limits.maxLifetimeSubmissions,
+        remaining: limits.maxLifetimeSubmissions === -1 ? 'unlimited' : Math.max(0, limits.maxLifetimeSubmissions - (this.usage.lifetimeSubmissionsChecked || 0))
+      }
     },
     features: limits.features,
     lastActivity: this.usage.lastActivityDate
@@ -285,7 +268,7 @@ UserSchema.methods.getUsageSummary = function() {
 };
 
 // Static method to get package limits
-UserSchema.statics.getPackageLimits = function(packageType) {
+UserSchema.statics.getPackageLimits = function (packageType) {
   return PACKAGE_LIMITS[packageType] || PACKAGE_LIMITS.free;
 };
 

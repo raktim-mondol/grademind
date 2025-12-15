@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
+const { enforcePlanLimits, logActivity } = require('../middleware/planEnforcement');
 const {
   getAssignments,
   getAssignmentById,
@@ -11,7 +12,8 @@ const {
   updateAssignment,
   deleteAssignment,
   getProcessingStatus,
-  rerunOrchestration
+  rerunOrchestration,
+  extractMetadata
 } = require('../controllers/assignmentController');
 
 // Configure multer for storing uploaded files
@@ -28,12 +30,12 @@ const storage = multer.diskStorage({
     } else if (file.fieldname === 'questions') {
       uploadPath = path.join(__dirname, '..', 'uploads', 'questions');
     }
-    
+
     // Create directory if it doesn't exist
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true });
     }
-    
+
     cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
@@ -60,14 +62,35 @@ router.get('/:id/status', getProcessingStatus);
 // POST /api/assignments/:id/rerun-orchestration - Re-run orchestration for an assignment
 router.post('/:id/rerun-orchestration', rerunOrchestration);
 
-// POST /api/assignments - Create new assignment
-// Multiple file uploads for assignment, solution, and rubric
+// POST /api/assignments/:id/extract-metadata - Extract metadata (questions, rubric, prompt) from files
+router.post('/:id/extract-metadata',
+  upload.fields([
+    { name: 'assignment', maxCount: 1 },
+    { name: 'rubric', maxCount: 1 },
+    { name: 'solution', maxCount: 1 }
+  ]),
+  extractMetadata
+);
+
+// POST /api/assignments/extract-metadata - Extract metadata from uploaded files (for new assignments)
+router.post('/extract-metadata',
+  upload.fields([
+    { name: 'assignment', maxCount: 1 },
+    { name: 'rubric', maxCount: 1 },
+    { name: 'solution', maxCount: 1 }
+  ]),
+  extractMetadata
+);
+
+// POST /api/assignments - Create new assignment with plan limit enforcement
 router.post('/',
   upload.fields([
     { name: 'assignment', maxCount: 1 },
     { name: 'solution', maxCount: 1 },
     { name: 'rubric', maxCount: 1 }
   ]),
+  enforcePlanLimits('create_assignment'),
+  logActivity('assignment_created', 'assignment'),
   createAssignment
 );
 

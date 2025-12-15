@@ -7,8 +7,18 @@ const { ClerkExpressRequireAuth, ClerkExpressWithAuth } = require('@clerk/clerk-
 const requireAuth = () => {
   // Only enable if Clerk is configured
   if (!process.env.CLERK_SECRET_KEY) {
-    console.warn('⚠️  CLERK_SECRET_KEY not set - authentication disabled');
-    return (req, res, next) => next();
+    console.warn('⚠️  Auth disabled - using default user ID');
+    return (req, res, next) => {
+      // Set a default dev user for development mode
+      req.user = {
+        id: '000000000000000000000001',
+        _id: '000000000000000000000001',
+        email: 'dev@local.test',
+        name: 'Dev User'
+      };
+      req.auth = { userId: '000000000000000000000001' };
+      next();
+    };
   }
 
   return ClerkExpressRequireAuth();

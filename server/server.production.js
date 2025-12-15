@@ -81,7 +81,7 @@ const uploadLimiter = rateLimit({
 
 app.use('/api/assignments', uploadLimiter);
 app.use('/api/submissions', uploadLimiter);
-app.use('/api/projects', uploadLimiter);
+
 
 // =============================================================================
 // BODY PARSING MIDDLEWARE
@@ -114,14 +114,7 @@ if (process.env.NODE_ENV !== 'production' || !process.env.R2_BUCKET_NAME) {
   }
 
   // Ensure project submission directories exist
-  const projectCodeDir = path.join(__dirname, 'uploads', 'project-submissions', 'code');
-  const projectReportDir = path.join(__dirname, 'uploads', 'project-submissions', 'reports');
-  if (!fs.existsSync(projectCodeDir)) {
-    fs.mkdirSync(projectCodeDir, { recursive: true });
-  }
-  if (!fs.existsSync(projectReportDir)) {
-    fs.mkdirSync(projectReportDir, { recursive: true });
-  }
+
 
   // Static file serving for development
   app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -162,7 +155,7 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/assignments', require('./routes/assignments'));
 app.use('/api/submissions', require('./routes/submissions'));
-app.use('/api/projects', require('./routes/projects'));
+
 
 // Base route
 app.get('/', (req, res) => {
@@ -173,7 +166,7 @@ app.get('/', (req, res) => {
       health: '/api/health',
       assignments: '/api/assignments',
       submissions: '/api/submissions',
-      projects: '/api/projects',
+
     },
   });
 });
@@ -192,7 +185,7 @@ if (process.env.NODE_ENV !== 'test') {
   require('./workers/solutionProcessor');
   require('./workers/submissionProcessor');
   require('./workers/evaluationProcessor');
-  require('./workers/projectProcessor');
+
   require('./workers/orchestrationProcessor');
 
   console.log('✅ Document processing workers initialized');

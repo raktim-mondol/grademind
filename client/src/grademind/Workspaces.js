@@ -1,245 +1,243 @@
 import React, { useState } from 'react';
-import { Plus, Folder, Trash2, Check, ChevronRight, LogOut, FolderCode } from './Icons';
+import {
+  Plus,
+  Search,
+  FileText,
+  Clock,
+  CheckCircle,
+  ChevronRight,
+  ArrowLeft,
+  Trash2,
+  Calendar
+} from 'lucide-react';
+import { Button } from '../components/ui/Button';
+import { AppLayout } from '../components/layout/AppLayout';
+
+import PlanLimitModal from '../components/ui/PlanLimitModal';
+import Pricing from './Pricing';
+import SetupForm from './SetupForm';
+import { useUser } from '../auth/ClerkWrapper';
 
 const Workspaces = ({
-  assignments,
-  projects = [],
-  onCreateNew,
-  onCreateProject,
+  assignments = [],
+  onCreateNew, // Now passed as a prop to handle the actual creation logic
   onSelect,
-  onSelectProject,
   onDelete,
-  onDeleteProject,
   onLogout,
-  userName,
-  userImageUrl
+  activeView = 'WORKSPACES',
+  onViewChange
 }) => {
-  const [activeTab, setActiveTab] = useState('assignments');
+  const { user } = useUser();
+  const [mode, setMode] = useState('LIST'); // 'LIST', 'NEW_ASSIGNMENT', 'PLAN_MANAGEMENT'
 
-  return (
-    <div className="min-h-screen w-full bg-zinc-50 flex flex-col relative isolate overflow-x-hidden">
-      <div className="fixed inset-0 bg-zinc-50 -z-10 pointer-events-none" />
+  // Plan limit modal state
+  const [planLimitModal, setPlanLimitModal] = useState({
+    isOpen: false,
+    limitInfo: null
+  });
 
-      <header className="bg-white border-b border-zinc-200 px-6 py-4 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-6xl mx-auto w-full flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-zinc-900 rounded-sm flex items-center justify-center">
-              <Check className="w-4 h-4 text-white" />
+  // Filter assignments based on search
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredAssignments = assignments.filter(a =>
+    a.config?.title?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleCreateAssignmentComplete = async (config) => {
+    try {
+      await onCreateNew(config);
+      setMode('LIST');
+    } catch (error) {
+      // Check if it's a plan limit error
+      if (error.response?.data?.upgradeRequired) {
+        setPlanLimitModal({
+          isOpen: true,
+          limitInfo: error.response.data
+        });
+      } else {
+        // Re-throw other errors to be handled by the caller
+        throw error;
+      }
+    }
+  };
+
+  // Render the Header based on mode
+  const renderHeader = () => {
+    if (mode === 'NEW_ASSIGNMENT') {
+      return (
+        <div className="mb-8 animate-in fade-in slide-in-from-top-2 duration-300">
+          <button
+            onClick={() => setMode('LIST')}
+            className="flex items-center text-sm text-zinc-500 hover:text-black transition-colors mb-4 group"
+          >
+            <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" />
+            Back to Workspaces
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-black rounded-xl">
+              <FileText className="w-6 h-6 text-white" />
             </div>
-            <span className="font-semibold text-lg tracking-tight text-zinc-900">grademind.ai</span>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-black">New Assignment</h1>
+              <p className="text-zinc-500">Create a new grading workflow</p>
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              {userImageUrl ? (
-                <img
-                  src={userImageUrl}
-                  alt={userName}
-                  className="w-8 h-8 rounded-full object-cover border border-zinc-200"
-                />
-              ) : (
-                <div className="w-8 h-8 rounded-full bg-zinc-200 flex items-center justify-center">
-                  <span className="text-xs font-medium text-zinc-600">
-                    {userName?.charAt(0)?.toUpperCase() || 'U'}
+        </div>
+      );
+    }
+
+    // Default List Header
+    return (
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-black">Workspaces</h1>
+          <p className="text-zinc-500">Manage your assignments</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="relative hidden md:block">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+            <input
+              type="text"
+              placeholder="Search assignments..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-4 py-2 bg-white border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5 focus:border-black w-64 transition-all hover:border-zinc-300"
+            />
+          </div>
+          <Button 
+            onClick={() => setMode('NEW_ASSIGNMENT')} 
+            icon={Plus}
+            variant="outline"
+            className="bg-white border-zinc-200 hover:bg-black hover:text-white hover:border-black"
+          >
+            New Assignment
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  // Render Content
+  if (mode === 'PLAN_MANAGEMENT') {
+    return (
+      <Pricing
+        onSelectPlan={(plan) => {
+          console.log('Selected plan:', plan);
+          alert(`Upgrade to ${plan} plan - Payment integration coming soon!`);
+          setMode('LIST');
+        }}
+        onBack={() => setMode('LIST')}
+      />
+    );
+  }
+
+  if (mode === 'NEW_ASSIGNMENT') {
+    return (
+      <AppLayout activeView={activeView} onViewChange={onViewChange} onLogout={onLogout}>
+        <div className="max-w-5xl mx-auto">
+          {renderHeader()}
+          <div className="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden animate-in fade-in duration-300 h-[650px]">
+            <SetupForm
+              onComplete={handleCreateAssignmentComplete}
+              onCancel={() => setMode('LIST')}
+            />
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  // List View
+  return (
+    <AppLayout activeView={activeView} onViewChange={onViewChange} onLogout={onLogout}>
+      <div className="space-y-6">
+        {renderHeader()}
+
+        {/* Assignments List */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {filteredAssignments.length === 0 ? (
+            <div className="col-span-full py-16 text-center bg-white rounded-xl border-2 border-dashed border-zinc-200">
+              <div className="w-14 h-14 bg-zinc-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <FileText className="w-7 h-7 text-zinc-400" />
+              </div>
+              <h3 className="text-black font-semibold mb-1">No assignments yet</h3>
+              <p className="text-zinc-500 text-sm mb-5">Create your first assignment to get started</p>
+              <Button size="sm" onClick={() => setMode('NEW_ASSIGNMENT')} icon={Plus}>
+                Create Assignment
+              </Button>
+            </div>
+          ) : (
+            filteredAssignments.map((assignment) => (
+              <div
+                key={assignment.id}
+                onClick={() => onSelect(assignment.id)}
+                className="group bg-white p-5 rounded-xl border border-zinc-200 hover:border-black/20 hover:shadow-lg transition-all duration-300 cursor-pointer relative overflow-hidden"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div className="p-2.5 bg-zinc-100 rounded-xl group-hover:bg-black group-hover:text-white transition-all duration-300">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-1 text-[10px] font-medium text-zinc-400 bg-zinc-50 px-2 py-1 rounded-full border border-zinc-100">
+                      <Calendar className="w-3 h-3" />
+                      {(() => {
+                        if (!assignment.createdAt) return 'N/A';
+                        const date = new Date(assignment.createdAt);
+                        return isNaN(date.getTime()) ? 'N/A' : date.toLocaleDateString();
+                      })()}
+                    </span>
+                    {assignment.processingStatus === 'processing' && (
+                      <span className="flex items-center gap-1 text-[10px] font-medium bg-amber-50 text-amber-700 px-2 py-1 rounded-full">
+                        <Clock className="w-3 h-3 animate-spin" />
+                        Processing
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        console.log('🗑️ Delete clicked for:', assignment.id);
+                        onDelete(assignment.id);
+                      }}
+                      className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete Assignment"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <h3 className="font-semibold text-black mb-1 group-hover:text-black transition-colors truncate">
+                  {assignment.config.title}
+                </h3>
+                <p className="text-sm text-zinc-500 line-clamp-2 mb-4 h-10">
+                  {assignment.config.description}
+                </p>
+
+                <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
+                  <div className="flex items-center gap-3 text-xs text-zinc-500">
+                    <span className="flex items-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      {assignment.submissionCount || 0} submissions
+                    </span>
+                  </div>
+                  <span className="text-xs font-medium text-zinc-400 group-hover:text-black transition-colors flex items-center gap-1">
+                    Open <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                   </span>
                 </div>
-              )}
-              <div className="text-sm text-zinc-600">
-                Welcome, <span className="font-medium text-zinc-900">{userName || 'User'}</span>
               </div>
-            </div>
-            <button onClick={onLogout} className="p-2 hover:bg-zinc-100 rounded-full transition-colors" title="Logout">
-              <LogOut className="w-4 h-4 text-zinc-400" />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="flex-1 p-8 z-0">
-        <div className="max-w-6xl mx-auto w-full space-y-8 animate-in fade-in duration-500">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-zinc-900 tracking-tight">Workspaces</h1>
-              <p className="text-zinc-500 mt-1">Manage your assignments and projects.</p>
-            </div>
-            <div className="flex items-center gap-3">
-              {activeTab === 'assignments' ? (
-                <button
-                  onClick={onCreateNew}
-                  className="flex items-center gap-2 bg-zinc-900 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-zinc-800 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5"
-                >
-                  <Plus className="w-4 h-4" />
-                  New Assignment
-                </button>
-              ) : (
-                <button
-                  onClick={onCreateProject}
-                  className="flex items-center gap-2 bg-zinc-900 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-zinc-800 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5"
-                >
-                  <Plus className="w-4 h-4" />
-                  New Project
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex gap-1 bg-zinc-100 p-1 rounded-lg w-fit">
-            <button
-              onClick={() => setActiveTab('assignments')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                activeTab === 'assignments'
-                  ? 'bg-white text-zinc-900 shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-900'
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <Folder className="w-4 h-4" />
-                Assignments ({assignments.length})
-              </span>
-            </button>
-            <button
-              onClick={() => setActiveTab('projects')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                activeTab === 'projects'
-                  ? 'bg-white text-zinc-900 shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-900'
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <FolderCode className="w-4 h-4" />
-                Projects ({projects.length})
-              </span>
-            </button>
-          </div>
-
-          {/* Assignments Tab */}
-          {activeTab === 'assignments' && (
-            <>
-              {assignments.length === 0 ? (
-                <div className="border border-dashed border-zinc-300 rounded-2xl p-12 text-center bg-white shadow-sm">
-                  <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Folder className="w-8 h-8 text-zinc-300" />
-                  </div>
-                  <h3 className="text-lg font-medium text-zinc-900">No assignments yet</h3>
-                  <p className="text-zinc-500 max-w-sm mx-auto mt-2 mb-8">Create your first assignment workspace to start adding sections and grading students.</p>
-                  <button
-                    onClick={onCreateNew}
-                    className="text-sm font-medium text-zinc-900 hover:underline decoration-zinc-300 underline-offset-4"
-                  >
-                    Create an assignment &rarr;
-                  </button>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {assignments.map((assignment) => (
-                    <div
-                      key={assignment.id}
-                      className="group bg-white border border-zinc-200 rounded-xl p-6 hover:border-zinc-400 hover:shadow-lg transition-all duration-300 flex flex-col justify-between h-64 cursor-pointer relative overflow-hidden"
-                      onClick={() => onSelect(assignment.id)}
-                    >
-                      <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onDelete(assignment.id); }}
-                          className="p-2 hover:bg-red-50 hover:text-red-600 rounded text-zinc-400 transition-colors"
-                          title="Delete Assignment"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      <div className="space-y-4 relative z-0">
-                        <div className="w-10 h-10 bg-zinc-100 rounded-lg flex items-center justify-center group-hover:bg-zinc-900 group-hover:text-white transition-colors duration-300">
-                          <Folder className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-lg text-zinc-900 line-clamp-1">{assignment.config.title}</h3>
-                          <p className="text-sm text-zinc-500 line-clamp-2 mt-2 h-10 leading-relaxed">{assignment.config.description || "No description provided."}</p>
-                        </div>
-                      </div>
-
-                      <div className="mt-auto pt-6 border-t border-zinc-100 flex justify-between items-center relative z-0">
-                        <div className="text-xs font-mono text-zinc-500 flex items-center gap-2">
-                          <span>{assignment.submissionCount || assignment.sections?.reduce((acc, s) => acc + (s.students?.length || 0), 0) || 0} Students</span>
-                          <span className="w-1 h-1 rounded-full bg-zinc-300"></span>
-                          <span className="font-semibold text-zinc-700">{assignment.config.totalScore || 100} Pts</span>
-                        </div>
-                        <div className="w-8 h-8 rounded-full bg-zinc-50 flex items-center justify-center group-hover:bg-black group-hover:text-white transition-colors transform group-hover:translate-x-1">
-                          <ChevronRight className="w-4 h-4" />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Projects Tab */}
-          {activeTab === 'projects' && (
-            <>
-              {projects.length === 0 ? (
-                <div className="border border-dashed border-zinc-300 rounded-2xl p-12 text-center bg-white shadow-sm">
-                  <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <FolderCode className="w-8 h-8 text-zinc-300" />
-                  </div>
-                  <h3 className="text-lg font-medium text-zinc-900">No projects yet</h3>
-                  <p className="text-zinc-500 max-w-sm mx-auto mt-2 mb-8">Create your first project to evaluate code submissions and reports.</p>
-                  <button
-                    onClick={onCreateProject}
-                    className="text-sm font-medium text-zinc-900 hover:underline decoration-zinc-300 underline-offset-4"
-                  >
-                    Create a project &rarr;
-                  </button>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {projects.map((project) => (
-                    <div
-                      key={project.id}
-                      className="group bg-white border border-zinc-200 rounded-xl p-6 hover:border-zinc-400 hover:shadow-lg transition-all duration-300 flex flex-col justify-between h-64 cursor-pointer relative overflow-hidden"
-                      onClick={() => onSelectProject(project.id)}
-                    >
-                      <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onDeleteProject(project.id); }}
-                          className="p-2 hover:bg-red-50 hover:text-red-600 rounded text-zinc-400 transition-colors"
-                          title="Delete Project"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      <div className="space-y-4 relative z-0">
-                        <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300">
-                          <FolderCode className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-lg text-zinc-900 line-clamp-1">{project.config.title}</h3>
-                          <p className="text-sm text-zinc-500 line-clamp-2 mt-2 h-10 leading-relaxed">{project.config.description || "No description provided."}</p>
-                        </div>
-                      </div>
-
-                      <div className="mt-auto pt-6 border-t border-zinc-100 flex justify-between items-center relative z-0">
-                        <div className="text-xs font-mono text-zinc-500 flex items-center gap-2">
-                          <span className="capitalize">{project.config.projectType?.replace(/_/g, ' ')}</span>
-                          <span className="w-1 h-1 rounded-full bg-zinc-300"></span>
-                          <span>{project.submissions?.length || 0} Submissions</span>
-                          <span className="w-1 h-1 rounded-full bg-zinc-300"></span>
-                          <span className="font-semibold text-zinc-700">{project.config.totalPoints || 100} Pts</span>
-                        </div>
-                        <div className="w-8 h-8 rounded-full bg-zinc-50 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors transform group-hover:translate-x-1">
-                          <ChevronRight className="w-4 h-4" />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
+            ))
           )}
         </div>
-      </main>
-    </div>
+      </div>
+
+      {/* Plan Limit Modal */}
+      <PlanLimitModal
+        isOpen={planLimitModal.isOpen}
+        limitInfo={planLimitModal.limitInfo}
+        onClose={() => setPlanLimitModal({ isOpen: false, limitInfo: null })}
+        onUpgrade={() => setMode('PLAN_MANAGEMENT')}
+      />
+    </AppLayout>
   );
 };
 

@@ -4,6 +4,7 @@ const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
+const { enforcePlanLimits, logActivity } = require('../middleware/planEnforcement');
 const {
   createProject,
   getProjects,
@@ -30,12 +31,12 @@ const projectStorage = multer.diskStorage({
     } else if (file.fieldname === 'rubric') {
       uploadPath = path.join(__dirname, '..', 'uploads', 'rubrics');
     }
-    
+
     // Create directory if it doesn't exist
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true });
     }
-    
+
     cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
@@ -54,12 +55,12 @@ const submissionStorage = multer.diskStorage({
     } else if (file.fieldname === 'reportFile') {
       uploadPath = path.join(__dirname, '..', 'uploads', 'project-submissions', 'reports');
     }
-    
+
     // Create directory if it doesn't exist
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true });
     }
-    
+
     cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
@@ -100,7 +101,7 @@ const uploadSubmission = multer({
       // Allow specific extensions for code files
       const allowedExtensions = ['.py', '.ipynb', '.java', '.js', '.html', '.css', '.zip'];
       const ext = path.extname(file.originalname).toLowerCase();
-      
+
       if (allowedExtensions.includes(ext)) {
         cb(null, true);
       } else {
@@ -115,11 +116,14 @@ const uploadSubmission = multer({
 // Apply authentication middleware to all routes
 router.use(requireAuth());
 
-// Project routes - using multer middleware for file uploads
+// Project routes - using multer middleware for file uploads with plan enforcement
 router.post('/', uploadProject.fields([
   { name: 'projectDetails', maxCount: 1 },
   { name: 'rubric', maxCount: 1 }
-]), createProject);
+]),
+  enforcePlanLimits('create_project'),
+  logActivity('project_created', 'project'),
+  createProject);
 
 router.get('/', getProjects);
 router.get('/:id', getProjectById);

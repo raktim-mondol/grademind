@@ -1053,6 +1053,12 @@ useEffect(() => {
 - **Endpoint**: `POST /api/assignments/:id/rerun-orchestration`
 - **Reference**: `RERUN_ORCHESTRATION_GUIDE.md`
 
+**Duplicate File Prevention** (IMPLEMENTED):
+- **Feature**: Prevents uploading submissions with duplicate filenames
+- **Protection**: Two-layer (frontend warning + backend enforcement)
+- **User Flow**: Must delete existing submission before re-uploading same filename
+- **Reference**: `DUPLICATE_FILE_PREVENTION.md`, `DUPLICATE_FILE_PREVENTION_SUMMARY.md`
+
 ---
 
 ## Best Practices for AI Assistants
