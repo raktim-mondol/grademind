@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # AI-Powered Automated Grading System
 
 This project is a full-stack web application designed to automate the grading of student submissions using large language models (LLMs). It provides a platform for instructors to upload assignments and rubrics, and for the system to automatically process and evaluate student work against them.
@@ -133,3 +134,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License.
+
+=======
+# grademind
+ai grading at its finest
+>>>>>>> 77d62ba467f6d73d660ce8c2734609e1c7b39983
