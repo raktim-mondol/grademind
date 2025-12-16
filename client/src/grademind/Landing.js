@@ -4,6 +4,11 @@ import {
   Check, ArrowRight, FileText, Sparkles, CheckCircle, Loader2,
   Brain, Target, Gauge, PieChart, Users, Shield, Zap, Menu, X, ChevronRight
 } from './Icons';
+import About from './About';
+import Blog from './Blog';
+import Contact from './Contact';
+import API from './API';
+import Security from './Security';
 
 // --- Components ---
 
@@ -37,12 +42,6 @@ const Navbar = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
             <button onClick={onLogin} className="text-sm font-medium text-zinc-900 hover:text-zinc-700 transition-colors px-3 py-2">
               Log in
             </button>
-            <button
-              onClick={onStart}
-              className="text-sm font-medium bg-zinc-900 text-white px-5 py-2.5 rounded-full hover:bg-zinc-800 transition-all hover:scale-105 active:scale-95 shadow-lg shadow-zinc-200"
-            >
-              Get Started
-            </button>
           </div>
         </div>
 
@@ -66,7 +65,6 @@ const Navbar = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
               <button onClick={() => { onDocs(); setMobileMenuOpen(false); }} className="text-left font-medium text-zinc-600 py-2">Documentation</button>
               <hr className="border-zinc-100" />
               <button onClick={() => { onLogin(); setMobileMenuOpen(false); }} className="text-left font-medium text-zinc-900 py-2">Log in</button>
-              <button onClick={() => { onStart(); setMobileMenuOpen(false); }} className="bg-zinc-900 text-white py-3 rounded-lg font-medium text-center">Get Started</button>
             </div>
           </motion.div>
         )}
@@ -262,21 +260,11 @@ const GradingAnimation = () => {
   );
 };
 
-const FeatureCard = ({ icon: Icon, title, description }) => (
-  <div
-    className="group p-6 rounded-2xl bg-zinc-50 border border-zinc-100 hover:border-zinc-200 hover:bg-white hover:shadow-xl hover:shadow-zinc-200/50 transition-all duration-300"
-  >
-    <div className="w-12 h-12 rounded-xl bg-white border border-zinc-100 shadow-sm flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300 group-hover:border-zinc-200">
-      <Icon className="w-6 h-6 text-zinc-900" strokeWidth={1.5} />
-    </div>
-    <h3 className="text-lg font-bold text-zinc-900 mb-2">{title}</h3>
-    <p className="text-sm text-zinc-500 leading-relaxed">{description}</p>
-  </div>
-);
 
 const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
   const [sloganIndex, setSloganIndex] = useState(0);
-  const slogans = ["in seconds.", "with precision.", "effortlessly."];
+  const [currentPage, setCurrentPage] = useState('home');
+  const slogans = ["in minutes.", "with precision.", "effortlessly."];
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -285,82 +273,169 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
     return () => clearInterval(interval);
   }, []);
 
+  // Scroll to top when page changes
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [currentPage]);
+
+  // Handle navigation with scroll to top
+  const navigateToPage = (page) => {
+    window.scrollTo(0, 0);
+    setCurrentPage(page);
+  };
+
+  const handleBackHome = () => {
+    window.scrollTo(0, 0);
+    setCurrentPage('home');
+  };
+
+  // Handle page navigation
+  if (currentPage === 'about') {
+    return <About 
+      onBack={handleBackHome}
+      onNavigate={navigateToPage}
+      onStart={onStart}
+      onDocs={onDocs}
+      onPrivacy={onPrivacy}
+      onTerms={onTerms}
+    />;
+  }
+  if (currentPage === 'blog') {
+    return <Blog 
+      onBack={handleBackHome}
+      onNavigate={navigateToPage}
+      onStart={onStart}
+      onDocs={onDocs}
+      onPrivacy={onPrivacy}
+      onTerms={onTerms}
+    />;
+  }
+  if (currentPage === 'contact') {
+    return <Contact 
+      onBack={handleBackHome}
+      onNavigate={navigateToPage}
+      onStart={onStart}
+      onDocs={onDocs}
+      onPrivacy={onPrivacy}
+      onTerms={onTerms}
+    />;
+  }
+  if (currentPage === 'api') {
+    return <API 
+      onBack={handleBackHome}
+      onNavigate={navigateToPage}
+      onStart={onStart}
+      onDocs={onDocs}
+      onPrivacy={onPrivacy}
+      onTerms={onTerms}
+    />;
+  }
+  if (currentPage === 'security') {
+    return <Security 
+      onBack={handleBackHome}
+      onNavigate={navigateToPage}
+      onStart={onStart}
+      onDocs={onDocs}
+      onPrivacy={onPrivacy}
+      onTerms={onTerms}
+    />;
+  }
+
   return (
     <div className="min-h-screen bg-white font-sans selection:bg-zinc-900 selection:text-white overflow-hidden">
       <Navbar onStart={onStart} onLogin={onLogin} onDocs={onDocs} onPrivacy={onPrivacy} onTerms={onTerms} />
 
       {/* --- HERO SECTION --- */}
-      <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 px-6 overflow-hidden">
-        <div className="max-w-7xl mx-auto flex flex-col items-center gap-16">
-
-          <div className="max-w-3xl text-center flex flex-col items-center">
-            <div
-              className="inline-flex items-center gap-2 px-3 py-1 bg-zinc-50 border border-zinc-200 rounded-full mb-8"
+      <section className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden">
+        <div className="max-w-7xl mx-auto w-full py-20">
+          
+          {/* Main Content */}
+          <div className="text-center mb-16">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6 }}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-full mb-8"
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-xs font-semibold text-zinc-600 uppercase tracking-wide">AI-Powered Grading Assistant</span>
-            </div>
+              <Sparkles className="w-4 h-4 text-zinc-900" />
+              <span className="text-xs font-bold text-zinc-900 uppercase tracking-wider">AI-Powered Grading Assistant</span>
+            </motion.div>
 
-            <h1
-              className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tighter text-zinc-900 mb-6 leading-[1.1]"
+            <motion.h1
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.1 }}
+              className="text-6xl sm:text-7xl md:text-8xl lg:text-9xl font-bold tracking-tighter text-zinc-900 mb-8 leading-[1.2]"
             >
-              Grading done <br />
-              <AnimatePresence mode="wait">
-                <motion.span
-                  key={sloganIndex}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.5 }}
-                  className="inline-block text-transparent bg-clip-text bg-gradient-to-br from-zinc-900 via-zinc-600 to-zinc-400 pb-2"
-                >
-                  {slogans[sloganIndex]}
-                </motion.span>
-              </AnimatePresence>
-            </h1>
+              Grading done
+              <br />
+              <span className="block mt-4">
+                <AnimatePresence mode="wait">
+                  <motion.span
+                    key={sloganIndex}
+                    initial={{ opacity: 0, y: 40, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -40, scale: 0.9 }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                    className="inline-block relative"
+                  >
+                    <span className="relative inline-block px-4">
+                      <span className="relative z-10 text-white">{slogans[sloganIndex]}</span>
+                      <motion.span
+                        initial={{ scaleX: 0 }}
+                        animate={{ scaleX: 1 }}
+                        exit={{ scaleX: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="absolute inset-0 bg-zinc-900 origin-left rounded-lg"
+                      />
+                    </span>
+                  </motion.span>
+                </AnimatePresence>
+              </span>
+            </motion.h1>
 
-            <p
-              className="text-lg sm:text-xl text-zinc-500 mb-8 leading-relaxed max-w-lg mx-auto"
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.2 }}
+              className="text-lg sm:text-xl md:text-2xl text-zinc-600 mb-12 leading-relaxed max-w-4xl mx-auto font-light"
             >
-              Upload assignments, define your rubric, and let AI handle the heavy lifting. Precise, consistent feedback for every student, every time.
-            </p>
+              Upload assignments, define your rubric, and let AI handle the heavy lifting.
+              <br className="hidden md:block" />
+              <span className="text-zinc-900 font-medium">Precise, consistent feedback for every student.</span>
+            </motion.p>
 
-            <div
-              className="flex flex-wrap items-center justify-center gap-4"
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.3 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
             >
               <button
-                onClick={onStart}
-                className="group px-8 py-4 bg-zinc-900 text-white rounded-full font-bold text-lg hover:bg-black transition-all hover:scale-105 shadow-xl shadow-zinc-200 flex items-center gap-2"
+                onClick={onLogin}
+                className="group w-full sm:w-auto px-10 py-5 bg-zinc-900 text-white rounded-full font-bold text-xl hover:bg-black transition-all hover:scale-105 active:scale-95 shadow-2xl shadow-zinc-900/20 flex items-center justify-center gap-3"
               >
                 Start Grading Free
-                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                <ArrowRight className="w-6 h-6 group-hover:translate-x-2 transition-transform" strokeWidth={2.5} />
               </button>
               <button
                 onClick={onDocs}
-                className="px-8 py-4 bg-white text-zinc-600 border border-zinc-200 rounded-full font-bold text-lg hover:bg-zinc-50 transition-colors flex items-center gap-2"
+                className="w-full sm:w-auto px-10 py-5 bg-white text-zinc-900 border-2 border-zinc-200 rounded-full font-bold text-xl hover:border-zinc-900 hover:bg-zinc-50 transition-all flex items-center justify-center gap-3"
               >
-                <FileText className="w-5 h-5" />
-                Read the Docs
+                <FileText className="w-6 h-6" />
+                Documentation
               </button>
-            </div>
-
-            <div
-              className="mt-12 flex items-center gap-4 text-xs text-zinc-400"
-            >
-              <div className="flex -space-x-2">
-                {[...Array(4)].map((_, i) => (
-                  <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-zinc-100 flex items-center justify-center overflow-hidden">
-                    <Users className="w-4 h-4 text-zinc-300" />
-                  </div>
-                ))}
-              </div>
-              <p>Trusted by forward-thinking educators</p>
-            </div>
+            </motion.div>
           </div>
 
         </div>
-        {/* Background Gradients */}
-        <div className="absolute top-0 right-0 -z-10 w-[800px] h-[800px] bg-gradient-to-b from-zinc-50 to-white rounded-full blur-3xl opacity-50 translate-x-1/3 -translate-y-1/3" />
+
+        {/* Background Elements */}
+        <div className="absolute top-1/4 right-0 -z-10 w-[600px] h-[600px] bg-zinc-50 rounded-full blur-3xl opacity-60" />
+        <div className="absolute bottom-1/4 left-0 -z-10 w-[500px] h-[500px] bg-zinc-100 rounded-full blur-3xl opacity-40" />
+        
+        {/* Grid Background */}
+        <div className="absolute inset-0 -z-20 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgwLDAsMCwwLjAyKSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-40" />
       </section>
 
       {/* --- GRADING DEMO SECTION --- */}
@@ -378,53 +453,84 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1000px] h-[600px] bg-gradient-to-b from-white to-transparent opacity-80 pointer-events-none" />
       </section>
 
-      {/* --- FEATURES SECTION --- */}
-      <section className="py-24 bg-white relative">
+      {/* --- FEATURES SECTION - BENTO GRID STYLE --- */}
+      <section className="py-32 bg-white relative overflow-hidden">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="text-center max-w-3xl mx-auto mb-20">
-            <h2 className="text-3xl md:text-5xl font-bold tracking-tight text-zinc-900 mb-6">Built for speed and accuracy.</h2>
-            <p className="text-lg text-zinc-500">
-              GradeMind isn't just a grader; it's your teaching assistant. Designed to save you hours every week while providing better feedback to students.
+          <div className="text-center max-w-2xl mx-auto mb-16">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-full mb-6">
+              <Zap className="w-4 h-4 text-white" />
+              <span className="text-xs font-bold text-white uppercase tracking-wider">Supercharged Features</span>
+            </div>
+            <h2 className="text-4xl md:text-6xl font-bold tracking-tight text-zinc-900 mb-6 leading-[1.1]">
+              Powerful Features for Modern Educators
+            </h2>
+            <p className="text-xl text-zinc-600 leading-relaxed">
+              Not just another tool. A complete grading ecosystem designed to amplify your impact.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <FeatureCard
-              icon={Target}
-              title="Rubric Alignment"
-              description="Define precise criteria. The AI strictly follows your rubric to ensure fair and consistent scoring across all submissions."
-              delay={0.1}
-            />
-            <FeatureCard
-              icon={Zap}
-              title="Instant Turnaround"
-              description="What used to take weekends now takes minutes. Upload a batch of 100 assignments and get them back before your coffee cools."
-              delay={0.2}
-            />
-            <FeatureCard
-              icon={Brain}
-              title="Context Aware"
-              description="Understands nuance in student answers. It doesn't just keyword match—it comprehends arguments and logic."
-              delay={0.3}
-            />
-            <FeatureCard
-              icon={PieChart}
-              title="Insightful Analytics"
-              description="Track class performance instantly. Identify common misconceptions and struggle areas with auto-generated reports."
-              delay={0.4}
-            />
-            <FeatureCard
-              icon={Shield}
-              title="Secure & Private"
-              description="Student data is processed securely. We don't train our models on your students' work without explicit permission."
-              delay={0.5}
-            />
-            <FeatureCard
-              icon={FileText}
-              title="Rich Feedback"
-              description="Every grade comes with detailed, constructive feedback explaining exactly why points were awarded or deducted."
-              delay={0.6}
-            />
+          {/* Bento Grid Layout */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 relative z-10">
+            {/* Large Feature Card - Spans 2 columns */}
+            <motion.div
+              whileHover={{ scale: 1.02, y: -5, zIndex: 10 }}
+              className="md:col-span-2 md:row-span-2 group relative overflow-hidden rounded-3xl bg-white p-8 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer border-2 border-zinc-200"
+            >
+              <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgwLDAsMCwwLjAzKSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-40" />
+              
+              <div className="relative z-10">
+                <div className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500 shadow-lg">
+                  <Brain className="w-8 h-8 text-white" strokeWidth={1.5} />
+                </div>
+                
+                <h3 className="text-3xl font-bold text-zinc-900 mb-4">Context-Aware Intelligence</h3>
+                <p className="text-lg text-zinc-600 leading-relaxed mb-8">
+                  Goes beyond keyword matching. Understands arguments, evaluates logic, and recognizes creative problem-solving approaches, just like you would.
+                </p>
+
+                <div className="mt-8 pt-8 border-t border-zinc-200">
+                  <h3 className="text-3xl font-bold text-zinc-900 mb-3">Rubric-Perfect Alignment</h3>
+                  <p className="text-lg text-zinc-600 leading-relaxed">
+                    Define your criteria once. AI follows it religiously for every single submission. No exceptions, no drift, zero inconsistency.
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Speed Card */}
+            <motion.div
+              whileHover={{ scale: 1.05, rotate: 1, zIndex: 10 }}
+              className="group relative overflow-hidden rounded-3xl bg-white border-2 border-zinc-200 p-8 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
+            >
+              <div className="absolute -right-8 -top-8 w-32 h-32 bg-zinc-50 rounded-full blur-2xl" />
+              <div className="relative z-10">
+                <div className="w-14 h-14 rounded-xl bg-zinc-900 flex items-center justify-center mb-6 group-hover:rotate-12 transition-transform duration-500 shadow-lg">
+                  <Zap className="w-7 h-7 text-white" strokeWidth={2} />
+                </div>
+                <h3 className="text-2xl font-bold text-zinc-900 mb-3">Lightning Fast</h3>
+                <p className="text-zinc-600 text-sm leading-relaxed">
+                  Grade 100 students under 30 minutes. Complete in minutes what used to take hours without sacrificing quality.
+                </p>
+              </div>
+            </motion.div>
+
+            {/* Analytics Card */}
+            <motion.div
+              whileHover={{ scale: 1.05, rotate: -1, zIndex: 10 }}
+              className="group relative overflow-hidden rounded-3xl bg-white border-2 border-zinc-200 p-8 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
+            >
+              <div className="absolute -right-4 -bottom-4 w-24 h-24 bg-zinc-50 rounded-full blur-2xl opacity-50" />
+              <div className="relative z-10">
+                <div className="w-14 h-14 rounded-xl bg-zinc-900 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500 shadow-lg">
+                  <PieChart className="w-7 h-7 text-white" strokeWidth={2} />
+                </div>
+                <h3 className="text-2xl font-bold text-zinc-900 mb-3">Smart Analytics</h3>
+                <p className="text-zinc-600 text-sm leading-relaxed">
+                  Instant insights into class performance and common mistakes. Export grades to Excel with one click. Perfect for record-keeping.
+                </p>
+              </div>
+            </motion.div>
+
           </div>
         </div>
       </section>
@@ -443,11 +549,11 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
               Ready to reclaim <br /> your weekends?
             </h2>
             <p className="text-lg md:text-xl text-zinc-300 max-w-2xl mx-auto mb-10 leading-relaxed">
-              Join thousands of educators who are saving 10+ hours a week with GradeMind. No credit card required to start.
+              Join thousands of educators who are saving 10+ hours a week with GradeMind, so you can focus on delivering lectures.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <button
-                onClick={onStart}
+                onClick={onLogin}
                 className="w-full sm:w-auto px-8 py-4 bg-white text-zinc-900 rounded-full font-bold text-lg hover:bg-zinc-100 transition-all hover:scale-105"
               >
                 Get Started for Free
@@ -477,14 +583,9 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
                 </div>
                 <span className="font-bold text-lg tracking-tight">GradeMind.ai</span>
               </div>
-              <p className="text-zinc-500 text-sm leading-relaxed max-w-xs mb-6">
+              <p className="text-zinc-500 text-sm leading-relaxed max-w-xs">
                 Empowering educators with AI-driven grading tools. Accurate, fast, and fair assessment for the modern classroom.
               </p>
-              <div className="flex gap-4">
-                {/* Social placeholders */}
-                <div className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-500 hover:bg-zinc-200 cursor-pointer transition-colors"><TwitterIcon /></div>
-                <div className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-500 hover:bg-zinc-200 cursor-pointer transition-colors"><GithubIcon /></div>
-              </div>
             </div>
 
             <div className="col-span-1">
@@ -492,18 +593,16 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
               <ul className="space-y-4 text-sm text-zinc-500">
                 <li><button onClick={onStart} className="hover:text-zinc-900 transition-colors">Pricing</button></li>
                 <li><button onClick={onDocs} className="hover:text-zinc-900 transition-colors">Documentation</button></li>
-                <li><button className="hover:text-zinc-900 transition-colors">API</button></li>
-                <li><button className="hover:text-zinc-900 transition-colors">Integrations</button></li>
+                <li><button onClick={() => alert('API coming soon')} className="hover:text-zinc-900 transition-colors">API</button></li>
               </ul>
             </div>
 
             <div className="col-span-1">
               <h4 className="font-bold text-zinc-900 mb-6">Company</h4>
               <ul className="space-y-4 text-sm text-zinc-500">
-                <li><button className="hover:text-zinc-900 transition-colors">About</button></li>
-                <li><button className="hover:text-zinc-900 transition-colors">Blog</button></li>
-                <li><button className="hover:text-zinc-900 transition-colors">Careers</button></li>
-                <li><button className="hover:text-zinc-900 transition-colors">Contact</button></li>
+                <li><button onClick={() => navigateToPage('about')} className="hover:text-zinc-900 transition-colors">About</button></li>
+                <li><button onClick={() => navigateToPage('blog')} className="hover:text-zinc-900 transition-colors">Blog</button></li>
+                <li><button onClick={() => navigateToPage('contact')} className="hover:text-zinc-900 transition-colors">Contact</button></li>
               </ul>
             </div>
 
@@ -512,20 +611,14 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
               <ul className="space-y-4 text-sm text-zinc-500">
                 <li><button onClick={onPrivacy} className="hover:text-zinc-900 transition-colors">Privacy</button></li>
                 <li><button onClick={onTerms} className="hover:text-zinc-900 transition-colors">Terms</button></li>
-                <li><button className="hover:text-zinc-900 transition-colors">Security</button></li>
+                <li><button onClick={() => navigateToPage('security')} className="hover:text-zinc-900 transition-colors">Security</button></li>
               </ul>
             </div>
           </div>
 
-          <div className="border-t border-zinc-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="border-t border-zinc-100 pt-8 flex justify-center items-center">
             <div className="text-xs text-zinc-400">
               © 2025 GradeMind AI Inc. All rights reserved.
-            </div>
-            <div className="flex gap-6">
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
-                <div className="w-2 h-2 rounded-full bg-green-500" />
-                All Systems Operational
-              </div>
             </div>
           </div>
         </div>
@@ -548,3 +641,4 @@ const GithubIcon = () => (
 );
 
 export default Landing;
+

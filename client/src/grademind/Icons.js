@@ -8,6 +8,7 @@ import {
   Users,
   BarChart3,
   ArrowRight,
+  ArrowLeft,
   Loader2,
   X,
   Download,
@@ -39,7 +40,19 @@ import {
   TrendingUp,
   Target,
   Gauge,
-  PieChart
+  PieChart,
+  Heart,
+  Mail,
+  MessageSquare,
+  HelpCircle,
+  Calendar,
+  Clock,
+  MapPin,
+  Briefcase,
+  DollarSign,
+  Lock,
+  Server,
+  Eye
 } from 'lucide-react';
 
 export {
@@ -52,6 +65,7 @@ export {
   Users,
   BarChart3,
   ArrowRight,
+  ArrowLeft,
   Loader2,
   X,
   Download,
@@ -83,5 +97,17 @@ export {
   TrendingUp,
   Target,
   Gauge,
-  PieChart
+  PieChart,
+  Heart,
+  Mail,
+  MessageSquare,
+  HelpCircle,
+  Calendar,
+  Clock,
+  MapPin,
+  Briefcase,
+  DollarSign,
+  Lock,
+  Server,
+  Eye
 };

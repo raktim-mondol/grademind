@@ -1,7 +1,12 @@
-import React from 'react';
-import { Check, ChevronLeft } from './Icons';
+import React, { useEffect } from 'react';
+import { Check } from './Icons';
+import Footer from './Footer';
 
-const Privacy = ({ onBack }) => {
+const Privacy = ({ onBack, onNavigate, onStart, onDocs, onPrivacy, onTerms }) => {
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
   return (
     <div className="min-h-screen bg-white font-sans selection:bg-zinc-900 selection:text-white flex flex-col">
       <nav className="w-full px-6 py-4 border-b border-zinc-200 sticky top-0 bg-white/80 backdrop-blur-sm z-20">
@@ -12,9 +17,6 @@ const Privacy = ({ onBack }) => {
             </div>
             <span className="font-semibold text-lg tracking-tight text-black">GradeMind.ai</span>
           </div>
-          <button onClick={onBack} className="text-sm font-medium text-zinc-500 hover:text-black flex items-center gap-1">
-            <ChevronLeft className="w-4 h-4" /> Back
-          </button>
         </div>
       </nav>
 
@@ -76,6 +78,15 @@ const Privacy = ({ onBack }) => {
           </section>
         </div>
       </main>
+
+      {/* Footer */}
+      <Footer 
+        onNavigate={onNavigate}
+        onStart={onStart}
+        onDocs={onDocs}
+        onPrivacy={onPrivacy}
+        onTerms={onTerms}
+      />
     </div>
   );
 };

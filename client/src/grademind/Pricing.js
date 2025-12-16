@@ -1,10 +1,11 @@
 import React from 'react';
-import { Check, Zap, Shield, ArrowRight, ChevronLeft, Sparkles } from './Icons';
+import { Check, Zap, Shield, ArrowRight, Sparkles } from './Icons';
+import Footer from './Footer';
 
-const Pricing = ({ onSelectPlan, onBack }) => {
+const Pricing = ({ onSelectPlan, onBack, onNavigate, onStart, onDocs, onPrivacy, onTerms }) => {
   return (
     <div className="min-h-screen bg-white text-zinc-900 font-sans selection:bg-zinc-900 selection:text-white flex flex-col">
-      <nav className="w-full p-6 flex justify-between items-center max-w-7xl mx-auto">
+      <nav className="w-full p-6 flex justify-start items-center max-w-7xl mx-auto">
         <button
           className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
           onClick={onBack}
@@ -13,9 +14,6 @@ const Pricing = ({ onSelectPlan, onBack }) => {
             <Check className="w-4 h-4 text-black" strokeWidth={3} />
           </div>
           <span className="font-bold text-lg tracking-tight">GradeMind.ai</span>
-        </button>
-        <button onClick={onBack} className="text-sm font-medium text-zinc-500 hover:text-black transition-colors flex items-center gap-1">
-          <ChevronLeft className="w-4 h-4" /> Back
         </button>
       </nav>
 
@@ -138,6 +136,15 @@ const Pricing = ({ onSelectPlan, onBack }) => {
           14-day money-back guarantee. Cancel anytime.
         </p>
       </div>
+
+      {/* Footer */}
+      <Footer 
+        onNavigate={onNavigate}
+        onStart={onStart}
+        onDocs={onDocs}
+        onPrivacy={onPrivacy}
+        onTerms={onTerms}
+      />
     </div>
   );
 };

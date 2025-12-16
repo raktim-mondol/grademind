@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Check, ChevronLeft, BookOpen, Sparkles, Zap, Cpu, LayoutGrid, FileText, LogOut } from './Icons';
+import { Check, BookOpen, Sparkles, Zap, Cpu, LayoutGrid, FileText, LogOut } from './Icons';
 import { useUser } from '../auth/ClerkWrapper';
+import Footer from './Footer';
 
-const Docs = ({ onViewChange, onLogout }) => {
+const Docs = ({ onViewChange, onLogout, onNavigate, onStart, onDocs, onPrivacy, onTerms }) => {
   const { user } = useUser();
   const [activeSection, setActiveSection] = useState('intro');
 
@@ -200,12 +201,15 @@ Good:
         <div className="h-full flex flex-col">
           {/* Logo */}
           <div className="h-16 flex items-center px-6 border-b border-zinc-200">
-            <div className="flex items-center gap-2">
+            <button
+              onClick={() => onViewChange('LANDING')}
+              className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+            >
               <div className="w-6 h-6 bg-white border-2 border-black rounded-sm flex items-center justify-center">
                 <Check className="w-4 h-4 text-black" strokeWidth={3} />
               </div>
               <span className="font-semibold text-lg tracking-tight text-black">GradeMind.ai</span>
-            </div>
+            </button>
           </div>
           {/* Doc Navigation */}
           <div className="flex-1 p-4 overflow-y-auto">
@@ -221,16 +225,6 @@ Good:
                 </button>
               ))}
             </nav>
-            {/* Back to App Button */}
-            <div className="mt-auto p-4">
-              <button
-                onClick={() => onViewChange('LANDING')}
-                className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-zinc-700 bg-zinc-100 rounded-lg hover:bg-zinc-200 transition-colors"
-              >
-                <ChevronLeft className="w-4 h-4 mr-2" />
-                Back to App
-              </button>
-            </div>
           </div>
         </div>
       </aside>
@@ -241,6 +235,15 @@ Good:
             {renderContent()}
           </div>
         </main>
+
+        {/* Footer */}
+        <Footer 
+          onNavigate={onNavigate}
+          onStart={onStart}
+          onDocs={onDocs}
+          onPrivacy={onPrivacy}
+          onTerms={onTerms}
+        />
       </div>
     </div>
   );
