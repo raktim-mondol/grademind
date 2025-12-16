@@ -2,6 +2,7 @@
 /node_modules
 /client/node_modules
 /server/node_modules
+node_modules/
 
 # Environment variables
 .env
@@ -12,15 +13,109 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
 
 # Build output
 /client/build
+build/
 
 # Misc
 .DS_Store
 /uploads
+/server/uploads
 /server/extracted-text.txt
 
 # User data - exclude PDFs and IPYNBs
 *.pdf
 *.ipynb
+
+# Documentation files (keeping only essential README and CLAUDE.md)
+ASSIGNMENT_PROCESSING_FLOW.md
+CHANGES_SUMMARY.md
+CLERK_SETUP_GUIDE.md
+DEPLOYMENT.md
+DESIGN_SYSTEM.md
+DUPLICATE_FILE_PREVENTION_SUMMARY.md
+DUPLICATE_FILE_PREVENTION.md
+DUPLICATE_PREVENTION_DIAGRAM.txt
+EXCEL_EXPORT_FIX.md
+EXCEL_FIX_COMPLETE.md
+FLOW_ANALYSIS.md
+FLOW_COMPARISON.md
+frontend-skill.md
+GEMINI_API_INTEGRATION_PLAN.md
+INVESTIGATION_INDEX.md
+INVESTIGATION_QUICK_REFERENCE.md
+INVESTIGATION_SUMMARY.md
+logo-svg-logo.md
+MVP_DEPLOYMENT_GUIDE.md
+ORCHESTRATION_STATUS_BUG_FIX.md
+ORCHESTRATION_UI_IMPLEMENTATION.md
+PLAN_TRACKING_SYSTEM.md
+PRODUCTION_DEPLOYMENT_GUIDE.md
+PRODUCTION_DEPLOYMENT.md
+QUICK_START_DUPLICATE_PREVENTION.md
+README_DUPLICATE_PREVENTION.md
+RERUN_ORCHESTRATION_GUIDE.md
+rule.md
+TESTING_EXCEL_FIX.md
+ui-ux-skill.md
+UPLOAD_BLOCKING_DURING_EVALUATION.md
+VISUAL_IMPROVEMENTS.md
+WORKSPACE_UI_IMPROVEMENTS.md
+
+# Server documentation files
+server/GEMINI_DEBUG_GUIDE.md
+server/IPYNB_PDF_STORAGE_IMPLEMENTATION.md
+server/IPYNB_TO_PDF_STRATEGY.md
+server/ORCHESTRATION_ENHANCEMENT_GUIDE.md
+server/PDF_SUBMISSION_CHANGES.md
+server/RUBRIC_EXTRACTION_GUIDE.md
+server/SOLUTION_PROCESSING_GUIDE.md
+
+# Test files
+test-*.js
+server/test-*.js
+working-principle/
+
+# Logo and design files
+company-logo.eps
+logo.svg
+*.eps
+
+# Configuration files not needed for core functionality
+nixpacks.toml
+railway.json
+vercel.json
+
+# Scripts
+scripts/
+upload_to_github.bat
+
+# Startup scripts (platform-specific)
+start.sh
+start.bat
+start-client.sh
+start-client.bat
+start-server.sh
+start-server.bat
+
+# Package lock conflicts
+package-lock.json
+server@1.0.0
+node
+
+# IDE and system files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+__pycache__/
+*.pyc
+
+# Temporary files
+*.tmp
+*.temp
+{
