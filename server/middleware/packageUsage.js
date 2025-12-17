@@ -7,14 +7,32 @@ const Assignment = require('../models/assignment');
  */
 const checkAssignmentLimit = async (req, res, next) => {
   try {
-    const userId = req.user?.id || req.body.userId;
+    let userId = req.user?.clerkId || req.user?.id || req.body.userId; // Use Clerk ID from req.user if available
+
+    // If we have a req.user from syncUser, use its ID directly
+    if (req.user && !userId) userId = req.user.clerkId;
+
+    let user = null;
 
     if (!userId) {
       // If no user context, allow (for backward compatibility)
       return next();
     }
 
-    const user = await User.findById(userId);
+    // 1. Prefer authenticated user (from syncUser)
+    if (req.user && (req.user.clerkId === userId || req.user._id.toString() === userId)) {
+      user = req.user;
+    } else {
+      // 2. Lookup by Mongo ID
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        user = await User.findById(userId);
+      }
+      // 3. Lookup by Clerk ID
+      if (!user) {
+        user = await User.findOne({ clerkId: userId });
+      }
+    }
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -45,13 +63,25 @@ const checkAssignmentLimit = async (req, res, next) => {
 const checkSubmissionLimit = async (req, res, next) => {
   try {
     const assignmentId = req.params.assignmentId || req.body.assignmentId;
-    const userId = req.user?.id || req.body.userId;
+    let userId = req.user?.clerkId || req.user?.id || req.body.userId;
+    let user = null;
 
     if (!userId || !assignmentId) {
       return next();
     }
 
-    const user = await User.findById(userId);
+    // 1. Prefer authenticated user
+    if (req.user && (req.user.clerkId === userId || req.user._id.toString() === userId)) {
+      user = req.user;
+    } else {
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        user = await User.findById(userId);
+      }
+      if (!user) {
+        user = await User.findOne({ clerkId: userId });
+      }
+    }
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -127,7 +157,17 @@ const trackActivity = (action, resourceType) => {
         try {
           const userId = req.user?.id || req.body.userId;
           if (userId) {
-            const user = await User.findById(userId);
+            let user = req.user;
+
+            if (!user || user.id !== userId) {
+              if (mongoose.Types.ObjectId.isValid(userId)) {
+                user = await User.findById(userId);
+              }
+              if (!user) {
+                user = await User.findOne({ clerkId: userId });
+              }
+            }
+
             if (user) {
               const resourceId = data._id || data.id || data.assignment?._id || data.submission?._id;
               await user.logActivity(action, resourceId, resourceType, {

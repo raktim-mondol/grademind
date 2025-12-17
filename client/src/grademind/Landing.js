@@ -261,9 +261,9 @@ const GradingAnimation = () => {
 };
 
 
-const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
+const Landing = ({ activePage = 'home', onNavigate, onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
   const [sloganIndex, setSloganIndex] = useState(0);
-  const [currentPage, setCurrentPage] = useState('home');
+  // Internal state removed in favor of lifted state from parent
   const slogans = ["in minutes.", "with precision.", "effortlessly."];
 
   useEffect(() => {
@@ -276,22 +276,26 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
   // Scroll to top when page changes
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [currentPage]);
+  }, [activePage]);
 
   // Handle navigation with scroll to top
   const navigateToPage = (page) => {
     window.scrollTo(0, 0);
-    setCurrentPage(page);
+    if (onNavigate) {
+      onNavigate(page);
+    }
   };
 
   const handleBackHome = () => {
     window.scrollTo(0, 0);
-    setCurrentPage('home');
+    if (onNavigate) {
+      onNavigate('home');
+    }
   };
 
   // Handle page navigation
-  if (currentPage === 'about') {
-    return <About 
+  if (activePage === 'about') {
+    return <About
       onBack={handleBackHome}
       onNavigate={navigateToPage}
       onStart={onStart}
@@ -300,8 +304,8 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
       onTerms={onTerms}
     />;
   }
-  if (currentPage === 'blog') {
-    return <Blog 
+  if (activePage === 'blog') {
+    return <Blog
       onBack={handleBackHome}
       onNavigate={navigateToPage}
       onStart={onStart}
@@ -310,8 +314,8 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
       onTerms={onTerms}
     />;
   }
-  if (currentPage === 'contact') {
-    return <Contact 
+  if (activePage === 'contact') {
+    return <Contact
       onBack={handleBackHome}
       onNavigate={navigateToPage}
       onStart={onStart}
@@ -320,8 +324,8 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
       onTerms={onTerms}
     />;
   }
-  if (currentPage === 'api') {
-    return <API 
+  if (activePage === 'api') {
+    return <API
       onBack={handleBackHome}
       onNavigate={navigateToPage}
       onStart={onStart}
@@ -330,8 +334,8 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
       onTerms={onTerms}
     />;
   }
-  if (currentPage === 'security') {
-    return <Security 
+  if (activePage === 'security') {
+    return <Security
       onBack={handleBackHome}
       onNavigate={navigateToPage}
       onStart={onStart}
@@ -348,7 +352,7 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
       {/* --- HERO SECTION --- */}
       <section className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden">
         <div className="max-w-7xl mx-auto w-full py-20">
-          
+
           {/* Main Content */}
           <div className="text-center mb-16">
             <motion.div
@@ -433,7 +437,7 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
         {/* Background Elements */}
         <div className="absolute top-1/4 right-0 -z-10 w-[600px] h-[600px] bg-zinc-50 rounded-full blur-3xl opacity-60" />
         <div className="absolute bottom-1/4 left-0 -z-10 w-[500px] h-[500px] bg-zinc-100 rounded-full blur-3xl opacity-40" />
-        
+
         {/* Grid Background */}
         <div className="absolute inset-0 -z-20 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgwLDAsMCwwLjAyKSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-40" />
       </section>
@@ -477,15 +481,15 @@ const Landing = ({ onStart, onLogin, onDocs, onPrivacy, onTerms }) => {
               className="md:col-span-2 md:row-span-2 group relative overflow-hidden rounded-3xl bg-white p-8 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer border-2 border-zinc-200"
             >
               <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgwLDAsMCwwLjAzKSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-40" />
-              
+
               <div className="relative z-10">
                 <div className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500 shadow-lg">
                   <Brain className="w-8 h-8 text-white" strokeWidth={1.5} />
                 </div>
-                
+
                 <h3 className="text-3xl font-bold text-zinc-900 mb-4">Context-Aware Intelligence</h3>
                 <p className="text-lg text-zinc-600 leading-relaxed mb-8">
-                  Goes beyond keyword matching. Understands arguments, evaluates logic, and recognizes creative problem-solving approaches, just like you would.
+                  Understands arguments, evaluates logic, and recognizes creative problem-solving approaches, just like you would.
                 </p>
 
                 <div className="mt-8 pt-8 border-t border-zinc-200">

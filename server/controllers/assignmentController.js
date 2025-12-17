@@ -183,6 +183,34 @@ exports.createAssignment = async (req, res) => {
       return res.status(500).json({ error: 'Failed to process uploaded files.' });
     }
 
+    // Set createdResource for logActivity middleware
+    res.locals.createdResource = assignment;
+
+    // Manually increment assignment usage
+    try {
+      const User = require('../models/user');
+      let user = null;
+
+      // Validate if userId is a standard MongoDB ObjectId
+      if (userId && userId.match(/^[0-9a-fA-F]{24}$/)) {
+        user = await User.findById(userId);
+      }
+
+      // If not found by ID (or not an ObjectId), try lookup by clerkId
+      if (!user) {
+        user = await User.findOne({ clerkId: userId });
+      }
+
+      if (user) {
+        await user.incrementUsage('assignmentsCreated');
+        console.log(`[Controller] Incrementing assignment usage for user ${user._id} (Clerk: ${userId})`);
+      } else {
+        console.warn(`[Controller] Could not find user to increment usage for ID: ${userId}`);
+      }
+    } catch (trackingError) {
+      console.error('Error incrementing assignment usage:', trackingError);
+    }
+
     res.status(201).json({
       message: 'Assignment created successfully and queued for processing',
       assignment

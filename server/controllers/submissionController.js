@@ -1066,6 +1066,31 @@ exports.uploadSubmission = async (req, res) => {
             fileType: processResult.fileType
           }).save();
 
+          // Manually track usage (Reliable replacement for middleware)
+          try {
+            const User = require('../models/user');
+            let user = null;
+
+            // Validate if userId is a standard MongoDB ObjectId
+            if (userId && userId.match(/^[0-9a-fA-F]{24}$/)) {
+              user = await User.findById(userId);
+            }
+
+            // If not found by ID (or not an ObjectId), try lookup by clerkId
+            if (!user) {
+              user = await User.findOne({ clerkId: userId });
+            }
+
+            if (user) {
+              await user.incrementUsage('totalSubmissionsGraded');
+              console.log(`[Controller] Incrementing usage for user ${user._id} (Clerk: ${userId})`);
+            } else {
+              console.warn(`[Controller] Could not find user to increment usage for ID: ${userId}`);
+            }
+          } catch (trackingError) {
+            console.error('Error tracking usage for submission:', trackingError);
+          }
+
           console.log(`Submission ${submission._id} queued for processing`);
           if (processResult.fileType === '.ipynb') {
             console.log(`✅ IPYNB file converted to PDF and stored in database`);
@@ -1092,6 +1117,9 @@ exports.uploadSubmission = async (req, res) => {
 
       // Get PDF information for the response
       const pdfInfo = getSubmissionPdfInfo(submission);
+
+      // Set createdResource for logActivity middleware
+      res.locals.createdResource = submission;
 
       return res.status(201).json({
         message: 'Submission created successfully',
@@ -1226,6 +1254,22 @@ exports.uploadBatchSubmissions = async (req, res) => {
               status: 'queued',
               isIpynbConversion: processResult.fileType === '.ipynb'
             });
+
+            // Manually track usage for batch uploads (middleware doesn't run per-item)
+            try {
+              const User = require('../models/user');
+              const user = await User.findById(userId);
+              if (user) {
+                // Increment total graded count
+                await user.incrementUsage('totalSubmissionsGraded');
+                // Log activity
+                await user.logActivity('submission_graded', submission._id, 'submission', {
+                  title: originalFileName
+                });
+              }
+            } catch (trackingError) {
+              console.error('Error tracking usage for batch submission:', trackingError);
+            }
           } else {
             console.error(`File processing failed for batch submission ${submission._id}: ${processResult.error}`);
 

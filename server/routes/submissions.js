@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
+const { enforcePlanLimits, logActivity } = require('../middleware/planEnforcement');
 const {
   getSubmissions,
   uploadSubmission,
@@ -38,10 +39,10 @@ const fileFilter = (req, file, cb) => {
   // Allow PDF files and Jupyter notebooks
   const allowedMimeTypes = ['application/pdf'];
   const allowedExtensions = ['.pdf', '.ipynb'];
-  
+
   const fileExtension = path.extname(file.originalname).toLowerCase();
   const mimeType = file.mimetype;
-  
+
   // Check for .ipynb files (they come as application/json or text/plain)
   if (fileExtension === '.ipynb') {
     // Accept .ipynb files regardless of MIME type (browsers may send different MIME types)
@@ -64,10 +65,20 @@ router.use(requireAuth());
 
 // Specific routes should come before variable routes
 // POST /api/submissions/single - Upload single submission
-router.post('/single', upload.single('submission'), uploadSubmission);
+router.post('/single',
+  enforcePlanLimits('grade_submission'),
+  logActivity('submission_graded', 'submission'),
+  upload.single('submission'),
+  uploadSubmission
+);
 
 // POST /api/submissions/batch - Upload batch submissions
-router.post('/batch', upload.array('submissions', 100), uploadBatchSubmissions);
+// Note: Batch uploads handle their own logging internally since it's multiple items
+router.post('/batch',
+  enforcePlanLimits('grade_submission'),
+  upload.array('submissions', 100),
+  uploadBatchSubmissions
+);
 
 // GET /api/submissions/single/:id - Get a single submission by ID
 router.get('/single/:id', getSubmissionById);

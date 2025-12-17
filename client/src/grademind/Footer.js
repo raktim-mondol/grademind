@@ -16,7 +16,9 @@ const GithubIcon = () => (
 const Footer = ({ onNavigate, onStart, onDocs, onPrivacy, onTerms }) => {
   const handleNavigate = (page) => {
     window.scrollTo(0, 0);
-    onNavigate(page);
+    if (onNavigate) {
+      onNavigate(page);
+    }
   };
 
   return (
@@ -38,8 +40,8 @@ const Footer = ({ onNavigate, onStart, onDocs, onPrivacy, onTerms }) => {
           <div className="col-span-1">
             <h4 className="font-bold text-zinc-900 mb-6">Product</h4>
             <ul className="space-y-4 text-sm text-zinc-500">
-              <li><button onClick={() => { window.scrollTo(0, 0); onStart(); }} className="hover:text-zinc-900 transition-colors">Pricing</button></li>
-              <li><button onClick={() => { window.scrollTo(0, 0); onDocs(); }} className="hover:text-zinc-900 transition-colors">Documentation</button></li>
+              <li><button onClick={() => { window.scrollTo(0, 0); if (onStart) onStart(); }} className="hover:text-zinc-900 transition-colors">Pricing</button></li>
+              <li><button onClick={() => { window.scrollTo(0, 0); if (onDocs) onDocs(); }} className="hover:text-zinc-900 transition-colors">Documentation</button></li>
               <li><button onClick={() => handleNavigate('api')} className="hover:text-zinc-900 transition-colors">API</button></li>
             </ul>
           </div>
@@ -56,8 +58,8 @@ const Footer = ({ onNavigate, onStart, onDocs, onPrivacy, onTerms }) => {
           <div className="col-span-1">
             <h4 className="font-bold text-zinc-900 mb-6">Legal</h4>
             <ul className="space-y-4 text-sm text-zinc-500">
-              <li><button onClick={() => { window.scrollTo(0, 0); onPrivacy(); }} className="hover:text-zinc-900 transition-colors">Privacy</button></li>
-              <li><button onClick={() => { window.scrollTo(0, 0); onTerms(); }} className="hover:text-zinc-900 transition-colors">Terms</button></li>
+              <li><button onClick={() => { window.scrollTo(0, 0); if (onPrivacy) onPrivacy(); }} className="hover:text-zinc-900 transition-colors">Privacy</button></li>
+              <li><button onClick={() => { window.scrollTo(0, 0); if (onTerms) onTerms(); }} className="hover:text-zinc-900 transition-colors">Terms</button></li>
               <li><button onClick={() => handleNavigate('security')} className="hover:text-zinc-900 transition-colors">Security</button></li>
             </ul>
           </div>

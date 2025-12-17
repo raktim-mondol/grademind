@@ -1,7 +1,13 @@
 import axios from 'axios';
 
 // Get API base URL from environment variable or use relative path for same-origin
-const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+let API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+
+// FORCE LOCALHOST if it's the placeholder URL (common issue if .env isn't updated or server not restarted)
+if (API_BASE_URL.includes('your-railway-backend.railway.app')) {
+  console.warn('⚠️ Detected placeholder API URL. Forcing localhost for development.');
+  API_BASE_URL = 'http://localhost:5000/api';
+}
 
 console.log('API Base URL:', API_BASE_URL);
 

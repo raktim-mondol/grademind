@@ -26,11 +26,13 @@ const AppView = {
 };
 
 function GradeMindApp() {
-  const { isSignedIn, isLoaded, signOut } = useAuth();
+  const { isSignedIn, isLoaded, signOut, getToken } = useAuth();
   const { user } = useUser();
   const [view, setView] = useState(AppView.LANDING);
   const [assignments, setAssignments] = useState([]);
   const [activeAssignmentId, setActiveAssignmentId] = useState(null);
+
+  const [landingPage, setLandingPage] = useState('home');
 
   // Confirmation Modal State
   const [confirmation, setConfirmation] = useState({
@@ -53,7 +55,7 @@ function GradeMindApp() {
       const fetchFromBackend = async () => {
         try {
           // Get auth token from Clerk
-          const token = await window.Clerk?.session?.getToken();
+          const token = await getToken();
 
           // Fetch assignments from backend
           const assignmentsResponse = await api.get('/assignments', {
@@ -166,7 +168,26 @@ function GradeMindApp() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, [isSignedIn]);
 
+  // Unified navigation handler
+  const handleNavigate = (destination) => {
+    window.scrollTo(0, 0);
+
+    // Check if destination is a sub-page of Landing (about, blog, contact, security, api)
+    if (['about', 'blog', 'contact', 'security', 'api', 'home'].includes(destination)) {
+      setLandingPage(destination);
+      setView(AppView.LANDING);
+    } else if (AppView[destination.toUpperCase()]) {
+      // It's a top-level view
+      setView(AppView[destination.toUpperCase()]);
+    } else {
+      console.warn(`Unknown navigation destination: ${destination}`);
+      setView(AppView.LANDING);
+      setLandingPage('home');
+    }
+  };
+
   const handleStart = () => {
+    window.scrollTo(0, 0);
     setView(AppView.PRICING);
   };
 
@@ -178,10 +199,68 @@ function GradeMindApp() {
     setView(AppView.SIGN_UP);
   };
 
-  const handlePlanSelect = (plan) => {
+  // Check for Payment Redirect
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentStatus = urlParams.get('payment');
+    const sessionId = urlParams.get('session_id');
+
+    if (paymentStatus === 'success' && sessionId && isSignedIn) {
+      console.log('✅ Payment success detected. Verifying session...');
+      const verifyPayment = async () => {
+        try {
+          const token = await getToken();
+          const response = await api.get(`/payments/verify-session?sessionId=${sessionId}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+          });
+
+          if (response.data.success) {
+            console.log('✅ Payment verified:', response.data.message);
+            alert('Payment successful! Your plan has been upgraded to Pro.');
+
+            // Clear URL params
+            window.history.replaceState({}, document.title, window.location.pathname);
+
+            // Navigate to settings (billing tab) or dashboard
+            setView(AppView.SETTINGS);
+          } else {
+            console.warn('⚠️ Payment not verified:', response.data);
+            alert('Payment could not be verified automatically. Please contact support if issues persist.');
+          }
+        } catch (err) {
+          console.error('Error verifying payment:', err);
+          alert('Error verifying payment status. Please refresh or contact support.');
+        }
+      };
+      verifyPayment();
+    } else if (paymentStatus === 'cancelled') {
+      alert('Payment was cancelled.');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [isSignedIn, getToken]);
+
+  const handlePlanSelect = async (plan) => {
     console.log(`Selected plan: ${plan}`);
     if (isSignedIn) {
-      setView(AppView.WORKSPACES);
+      if (plan === 'Pro') {
+        try {
+          const token = await getToken();
+          const response = await api.post('/payments/create-checkout-session', {
+            packageType: 'pro'
+          }, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+          });
+
+          if (response.data.url) {
+            window.location.href = response.data.url;
+          }
+        } catch (err) {
+          console.error('Payment error:', err);
+          alert('Failed to initiate payment. Please try again.');
+        }
+      } else {
+        setView(AppView.WORKSPACES);
+      }
     } else {
       setView(AppView.SIGN_UP);
     }
@@ -245,7 +324,7 @@ function GradeMindApp() {
       console.log('📤 Sending assignment to backend API...');
 
       // Get auth token from Clerk
-      const token = await window.Clerk?.session?.getToken();
+      const token = await getToken();
 
       // POST to backend API
       const response = await api.post('/assignments', formData, {
@@ -297,7 +376,7 @@ function GradeMindApp() {
           console.log('🗑️ Deleting assignment:', id);
 
           // Get auth token from Clerk
-          const token = await window.Clerk?.session?.getToken();
+          const token = await getToken();
 
           // Call backend API to delete
           const response = await api.delete(`/assignments/${id}`, {
@@ -352,6 +431,8 @@ function GradeMindApp() {
     <div className="font-sans antialiased text-zinc-900 bg-white min-h-screen selection:bg-zinc-900 selection:text-white">
       {view === AppView.LANDING && (
         <Landing
+          activePage={landingPage}
+          onNavigate={handleNavigate}
           onStart={handleStart}
           onLogin={handleSignIn}
           onDocs={() => setView(AppView.DOCS)}
@@ -413,7 +494,15 @@ function GradeMindApp() {
       {view === AppView.PRICING && (
         <Pricing
           onSelectPlan={handlePlanSelect}
-          onBack={() => setView(AppView.LANDING)}
+          onBack={() => {
+            setView(AppView.LANDING);
+            setLandingPage('home');
+          }}
+          onNavigate={handleNavigate}
+          onStart={handleStart}
+          onDocs={() => setView(AppView.DOCS)}
+          onPrivacy={() => setView(AppView.PRIVACY)}
+          onTerms={() => setView(AppView.TERMS)}
         />
       )}
 
@@ -422,18 +511,39 @@ function GradeMindApp() {
           activeView={view}
           onViewChange={setView}
           onLogout={handleLogout}
+          onNavigate={handleNavigate}
+          onStart={handleStart}
+          onDocs={() => setView(AppView.DOCS)}
+          onPrivacy={() => setView(AppView.PRIVACY)}
+          onTerms={() => setView(AppView.TERMS)}
         />
       )}
 
       {view === AppView.PRIVACY && (
         <Privacy
-          onBack={() => setView(AppView.LANDING)}
+          onBack={() => {
+            setView(AppView.LANDING);
+            setLandingPage('home');
+          }}
+          onNavigate={handleNavigate}
+          onStart={handleStart}
+          onDocs={() => setView(AppView.DOCS)}
+          onPrivacy={() => setView(AppView.PRIVACY)}
+          onTerms={() => setView(AppView.TERMS)}
         />
       )}
 
       {view === AppView.TERMS && (
         <Terms
-          onBack={() => setView(AppView.LANDING)}
+          onBack={() => {
+            setView(AppView.LANDING);
+            setLandingPage('home');
+          }}
+          onNavigate={handleNavigate}
+          onStart={handleStart}
+          onDocs={() => setView(AppView.DOCS)}
+          onPrivacy={() => setView(AppView.PRIVACY)}
+          onTerms={() => setView(AppView.TERMS)}
         />
       )}
 

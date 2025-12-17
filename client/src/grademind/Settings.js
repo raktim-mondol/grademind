@@ -5,15 +5,18 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import Pricing from './Pricing';
 import { User, Bell, Shield, CreditCard, Trash2, Save } from 'lucide-react';
-import { useUser } from '../auth/ClerkWrapper';
+import { useUser, useAuth } from '../auth/ClerkWrapper';
 import api from '../utils/api';
 
 const Settings = ({ activeView, onViewChange, onLogout }) => {
     const { user } = useUser();
+    const { getToken } = useAuth();
     const [activeTab, setActiveTab] = useState('profile');
     const [isSaving, setIsSaving] = useState(false);
     const [showPricing, setShowPricing] = useState(false);
     const [usage, setUsage] = useState(null);
+    const [loadingUsage, setLoadingUsage] = useState(false);
+    const [usageError, setUsageError] = useState(null);
 
     // Profile settings state
     const [profileData, setProfileData] = useState({
@@ -34,13 +37,22 @@ const Settings = ({ activeView, onViewChange, onLogout }) => {
     // Fetch usage data
     useEffect(() => {
         const fetchUsage = async () => {
-            if (!user?.id) return;
+            console.log('Settings: fetching usage. User:', user);
+            if (!user?.id) {
+                console.log('Settings: No user ID, skipping fetch');
+                return;
+            }
 
             try {
+                // Use the hook's token if possible, but here we access window.Clerk for now or need to pass getToken from props/hook
+                // The component uses `useUser` but not `useAuth` which has `getToken`.
                 const token = await window.Clerk?.session?.getToken();
+                console.log('Settings: Fetching from', `/packages/usage/${user.id}`);
+
                 const response = await api.get(`/packages/usage/${user.id}`, {
                     headers: token ? { 'Authorization': `Bearer ${token}` } : {}
                 });
+                console.log('Settings: Usage response:', response.data);
                 setUsage(response.data);
             } catch (error) {
                 console.error('Error fetching usage:', error);
@@ -75,10 +87,30 @@ const Settings = ({ activeView, onViewChange, onLogout }) => {
     if (showPricing) {
         return (
             <Pricing
-                onSelectPlan={(plan) => {
+                onSelectPlan={async (plan) => {
                     console.log('Selected plan:', plan);
-                    alert(`Upgrade to ${plan} plan - Payment integration coming soon!`);
-                    setShowPricing(false);
+
+                    if (plan === 'Pro') {
+                        try {
+                            const token = await getToken();
+                            const response = await api.post('/payments/create-checkout-session', {
+                                packageType: 'pro'
+                            }, {
+                                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+                            });
+
+                            if (response.data.url) {
+                                window.location.href = response.data.url;
+                            }
+                        } catch (err) {
+                            console.error('Payment error:', err);
+                            alert('Failed to initiate payment. Please try again.');
+                        }
+                    } else if (plan === 'Institution') {
+                        window.location.href = 'mailto:contact@grademind.ai?subject=Institution Plan Inquiry';
+                    } else {
+                        setShowPricing(false);
+                    }
                 }}
                 onBack={() => setShowPricing(false)}
             />
@@ -286,10 +318,11 @@ const Settings = ({ activeView, onViewChange, onLogout }) => {
                                     <div className="flex items-center justify-between mb-4">
                                         <div>
                                             <h3 className="text-2xl font-bold text-black capitalize">
-                                                {usage?.package || 'Free'} Plan
+                                                {usage?.package || 'Starter'} Plan
                                             </h3>
                                             <p className="text-zinc-500">
-                                                {usage?.package === 'free' && 'Free forever'}
+                                                {usage?.package === 'free' && 'Legacy Free'}
+                                                {usage?.package === 'starter' && 'Free forever'}
                                                 {usage?.package === 'basic' && '$9/month'}
                                                 {usage?.package === 'pro' && '$29/month'}
                                                 {usage?.package === 'enterprise' && 'Custom pricing'}
@@ -299,6 +332,7 @@ const Settings = ({ activeView, onViewChange, onLogout }) => {
                                         <div className="text-right">
                                             <p className="text-3xl font-bold text-black">
                                                 {usage?.package === 'free' && '$0'}
+                                                {usage?.package === 'starter' && '$0'}
                                                 {usage?.package === 'basic' && '$9'}
                                                 {usage?.package === 'pro' && '$29'}
                                                 {usage?.package === 'enterprise' && 'Custom'}
@@ -309,22 +343,19 @@ const Settings = ({ activeView, onViewChange, onLogout }) => {
                                     </div>
 
                                     {/* Usage Stats */}
-                                    {usage && (
+                                    {loadingUsage && <div className="p-4 text-center text-zinc-500">Loading usage stats...</div>}
+                                    {usageError && <div className="p-4 text-center text-red-500">{usageError}</div>}
+
+                                    {!loadingUsage && !usageError && usage && (
                                         <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-zinc-200">
                                             <div className="bg-white rounded-lg p-4 border border-zinc-200">
-                                                <p className="text-sm text-zinc-500 mb-1">Lifetime Assignments</p>
+                                                <p className="text-sm text-zinc-500 mb-1">Assignment Workspaces</p>
                                                 <p className="text-2xl font-bold text-black">
                                                     {usage.usage.assignments?.lifetimeUsed || 0} / {usage.usage.assignments?.limit === -1 ? '∞' : (usage.usage.assignments?.limit || 0)}
                                                 </p>
                                             </div>
                                             <div className="bg-white rounded-lg p-4 border border-zinc-200">
-                                                <p className="text-sm text-zinc-500 mb-1">Lifetime Projects</p>
-                                                <p className="text-2xl font-bold text-black">
-                                                    {usage.usage.projects?.lifetimeUsed || 0} / {usage.usage.projects?.limit === -1 ? '∞' : (usage.usage.projects?.limit || 0)}
-                                                </p>
-                                            </div>
-                                            <div className="bg-white rounded-lg p-4 border border-zinc-200 col-span-2">
-                                                <p className="text-sm text-zinc-500 mb-1">Lifetime Student Submissions</p>
+                                                <p className="text-sm text-zinc-500 mb-1">No. of Student Submission</p>
                                                 <p className="text-2xl font-bold text-black">
                                                     {usage.usage.submissions?.lifetimeUsed || 0} / {usage.usage.submissions?.limit === -1 ? '∞' : (usage.usage.submissions?.limit || 0)}
                                                 </p>
@@ -339,7 +370,6 @@ const Settings = ({ activeView, onViewChange, onLogout }) => {
                                                 <>
                                                     <p>✓ Basic AI Grading</p>
                                                     <p>✓ Limited Assignments</p>
-                                                    <p>✓ Limited Projects</p>
                                                 </>
                                             )}
                                     </div>
@@ -352,7 +382,7 @@ const Settings = ({ activeView, onViewChange, onLogout }) => {
                                             onClick={() => setShowPricing(true)}
                                             className="flex-1"
                                         >
-                                            {!usage || usage?.package === 'free' ? 'Upgrade to Pro' : 'Manage Plan'}
+                                            {!usage || ['free', 'starter'].includes(usage?.package) ? 'Upgrade to Pro' : 'Manage Plan'}
                                         </Button>
                                         <Button
                                             variant="secondary"

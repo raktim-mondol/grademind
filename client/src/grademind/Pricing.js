@@ -48,7 +48,7 @@ const Pricing = ({ onSelectPlan, onBack, onNavigate, onStart, onDocs, onPrivacy,
                 <Check className="w-4 h-4 text-zinc-900" /> 1 Active Workspace
               </div>
               <div className="flex items-center gap-3 text-sm text-zinc-700">
-                <Check className="w-4 h-4 text-zinc-900" /> Up to 30 Students
+                <Check className="w-4 h-4 text-zinc-900" /> Up to 10 Students
               </div>
               <div className="flex items-center gap-3 text-sm text-zinc-700">
                 <Check className="w-4 h-4 text-zinc-900" /> Basic AI Grading
@@ -138,7 +138,7 @@ const Pricing = ({ onSelectPlan, onBack, onNavigate, onStart, onDocs, onPrivacy,
       </div>
 
       {/* Footer */}
-      <Footer 
+      <Footer
         onNavigate={onNavigate}
         onStart={onStart}
         onDocs={onDocs}

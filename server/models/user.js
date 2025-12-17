@@ -4,11 +4,18 @@ const Schema = mongoose.Schema;
 // Package definitions with limits
 // Package definitions with limits
 const PACKAGE_LIMITS = {
+  starter: {
+    maxAssignments: 1,
+    maxLifetimeAssignments: 1,
+    maxSubmissionsPerAssignment: 10,
+    maxLifetimeSubmissions: 10,
+    features: ['basic_grading']
+  },
   free: {
-    maxAssignments: 1, // Active limit (kept for backward compatibility or display)
-    maxLifetimeAssignments: 1, // STRICT LIFETIME LIMIT
-    maxSubmissionsPerAssignment: 20, // This seems to be "per assignment" in old code, but requirement is TOTAL. Using 20 as placeholder for "safety" per assignment if needed, but main check will be lifetime.
-    maxLifetimeSubmissions: 20, // STRICT LIFETIME LIMIT (Total across all assignments)
+    maxAssignments: 1,
+    maxLifetimeAssignments: 1,
+    maxSubmissionsPerAssignment: 20,
+    maxLifetimeSubmissions: 20,
     features: ['basic_grading']
   },
   basic: { // Kept for legacy/intermediate, assuming slightly better than free? Or deprecated? Leaving as is but adding lifetime placeholders.
@@ -39,6 +46,7 @@ const UsageSchema = new Schema({
   lifetimeAssignmentsCreated: { type: Number, default: 0 }, // NEW: Track total created ever
 
   totalSubmissionsGraded: { type: Number, default: 0 },
+  lifetimeSubmissionsChecked: { type: Number, default: 0 },
 
 
   lastActivityDate: { type: Date, default: Date.now }
@@ -73,8 +81,14 @@ const UserSchema = new Schema({
   },
   email: {
     type: String,
+    type: String,
     required: true,
     unique: true
+  },
+  clerkId: {
+    type: String,
+    unique: true,
+    sparse: true // Allow null/undefined for legacy users initially
   },
   password: {
     type: String,
@@ -90,7 +104,7 @@ const UserSchema = new Schema({
   package: {
     type: {
       type: String,
-      enum: ['free', 'basic', 'pro', 'enterprise'],
+      enum: ['free', 'starter', 'basic', 'pro', 'enterprise'],
       default: 'free'
     },
     startDate: {
@@ -128,9 +142,8 @@ const UserSchema = new Schema({
   }
 });
 
-// Method to get package limits
 UserSchema.methods.getPackageLimits = function () {
-  return PACKAGE_LIMITS[this.package.type] || PACKAGE_LIMITS.free;
+  return PACKAGE_LIMITS[this.package.type] || PACKAGE_LIMITS.starter;
 };
 
 // Method to check if user can perform action
@@ -214,20 +227,27 @@ UserSchema.methods.logActivity = async function (action, resourceId, resourceTyp
 
 // Method to increment usage counter
 UserSchema.methods.incrementUsage = async function (field) {
+  console.log(`[User Model] incrementUsage called for field: ${field}, Current value: ${this.usage[field]}`);
   if (this.usage[field] !== undefined) {
     this.usage[field] += 1; // Increment active count
+    console.log(`[User Model] Incremented active count to: ${this.usage[field]}`);
 
     // Also increment lifetime counters
     if (field === 'assignmentsCreated') {
       this.usage.lifetimeAssignmentsCreated = (this.usage.lifetimeAssignmentsCreated || 0) + 1;
+      console.log(`[User Model] Incremented lifetimeAssignmentsCreated to: ${this.usage.lifetimeAssignmentsCreated}`);
 
     } else if (field === 'totalSubmissionsGraded') {
       // Both contribute to the single lifetime submissions counter
       this.usage.lifetimeSubmissionsChecked = (this.usage.lifetimeSubmissionsChecked || 0) + 1;
+      console.log(`[User Model] Incremented lifetimeSubmissionsChecked to: ${this.usage.lifetimeSubmissionsChecked}`);
     }
 
     this.usage.lastActivityDate = new Date();
-    await this.save();
+    const saveResult = await this.save();
+    console.log(`[User Model] User saved. New version: ${saveResult.__v}`);
+  } else {
+    console.error(`[User Model] Field ${field} is undefined in usage schema`);
   }
 };
 
@@ -269,7 +289,7 @@ UserSchema.methods.getUsageSummary = function () {
 
 // Static method to get package limits
 UserSchema.statics.getPackageLimits = function (packageType) {
-  return PACKAGE_LIMITS[packageType] || PACKAGE_LIMITS.free;
+  return PACKAGE_LIMITS[packageType] || PACKAGE_LIMITS.starter;
 };
 
 // Export package limits for use elsewhere

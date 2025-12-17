@@ -175,6 +175,10 @@ const logActivity = (action, resourceType) => {
                             console.error('Error logging activity:', err);
                         });
 
+                        // Increment logic removed - handled explicitly in controllers to prevent race conditions
+                        // and ensure reliable counting only on successful processing initiation.
+
+                        /*
                         // Increment usage counter for creates
                         if (action === 'assignment_created') {
                             user.incrementUsage('assignmentsCreated').catch(err => {
@@ -185,6 +189,7 @@ const logActivity = (action, resourceType) => {
                                 console.error('Error incrementing usage:', err);
                             });
                         }
+                        */
 
                     } catch (error) {
                         console.error('Error in activity logging:', error);

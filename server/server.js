@@ -20,6 +20,10 @@ const {
 // Load environment variables
 dotenv.config();
 
+console.log('🔍 Checking Environment Variables:');
+console.log('   - STRIPE_SECRET_KEY:', process.env.STRIPE_SECRET_KEY ? 'Loaded (starts with ' + process.env.STRIPE_SECRET_KEY.substring(0, 7) + '...)' : 'MISSING');
+console.log('   - CLIENT_URL:', process.env.CLIENT_URL);
+
 // Create Express app
 const app = express();
 
@@ -31,7 +35,15 @@ initRedis();
 
 // Middlewares
 app.use(cors());
-app.use(express.json());
+
+// Use raw parser for webhook signatures BEFORE global JSON parser
+app.use((req, res, next) => {
+  if (req.originalUrl === '/api/payments/webhook') {
+    next();
+  } else {
+    express.json()(req, res, next);
+  }
+});
 app.use(express.urlencoded({ extended: true }));
 
 // Database connection middleware for API routes
@@ -49,6 +61,10 @@ app.use('/api', (req, res, next) => {
 if (process.env.CLERK_SECRET_KEY) {
   app.use('/api', ClerkExpressWithAuth());
   console.log('✅ Clerk authentication middleware enabled');
+
+  // Sync Clerk user with MongoDB user
+  app.use('/api', require('./middleware/syncUser'));
+  console.log('✅ User sync middleware enabled');
 } else {
   console.log('⚠️  Clerk authentication disabled - running in development mode');
 }
@@ -71,6 +87,7 @@ app.use('/api/submissions', require('./routes/submissions'));
 
 app.use('/api/grademind', require('./routes/grademind'));
 app.use('/api/packages', require('./routes/packages'));
+app.use('/api/payments', require('./routes/payments'));
 
 // Base route
 app.get('/', (req, res) => {

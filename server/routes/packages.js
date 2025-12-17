@@ -19,47 +19,46 @@ router.get('/usage/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Validate ObjectId format to prevent CastError
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      // Return default free-tier response for invalid ObjectIds (e.g., mock users)
-      console.log(`⚠️ Invalid ObjectId format: ${userId} - returning default free tier`);
-      const freeLimits = User.PACKAGE_LIMITS.free || {};
-      return res.json({
-        package: 'free',
-        isActive: true,
-        expiresAt: null,
-        usage: {
-          assignments: {
-            used: 0,
-            limit: freeLimits.maxAssignments || 3,
-            remaining: freeLimits.maxAssignments || 3
-          },
-          totalSubmissionsGraded: 0,
-        },
-        features: freeLimits.features || ['basic_grading'],
-        lastActivity: null,
-        isDevMode: true
-      });
+    // 1. Try to use authenticated user if it matches
+    if (req.user && (req.user.clerkId === userId || req.user._id.toString() === userId)) {
+      const summary = req.user.getUsageSummary();
+      return res.json(summary);
     }
 
-    const user = await User.findById(userId);
+    // 2. Try to find user by MongoDB ID
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+
+    // 3. Try to find user by Clerk ID
     if (!user) {
-      // Return default free-tier response for users not in database
-      console.log(`⚠️ User not found: ${userId} - returning default free tier`);
-      const freeLimits = User.PACKAGE_LIMITS.free || {};
+      user = await User.findOne({ clerkId: userId });
+    }
+
+    if (!user) {
+      // Return default starter response for users not in database
+      console.log(`⚠️ User not found: ${userId} - returning default starter tier`);
+      const limits = User.PACKAGE_LIMITS.starter || {};
       return res.json({
-        package: 'free',
+        package: 'starter',
         isActive: true,
         expiresAt: null,
         usage: {
           assignments: {
             used: 0,
-            limit: freeLimits.maxAssignments || 3,
-            remaining: freeLimits.maxAssignments || 3
+            lifetimeUsed: 0,
+            limit: limits.maxLifetimeAssignments || 3,
+            remaining: limits.maxLifetimeAssignments || 3
           },
-          totalSubmissionsGraded: 0,
+          submissions: {
+            totalGraded: 0,
+            lifetimeUsed: 0,
+            limit: limits.maxLifetimeSubmissions || 50,
+            remaining: limits.maxLifetimeSubmissions || 50
+          },
         },
-        features: freeLimits.features || ['basic_grading'],
+        features: limits.features || ['basic_grading'],
         lastActivity: null,
         isDevMode: true
       });
@@ -77,7 +76,22 @@ router.get('/usage/:userId', async (req, res) => {
 router.get('/activity/:userId', async (req, res) => {
   try {
     const { limit = 50, offset = 0 } = req.query;
-    const user = await User.findById(req.params.userId);
+    const userId = req.params.userId;
+
+    let user = null;
+
+    // Prefer the authenticated user if it matches
+    if (req.user && (req.user.clerkId === userId || req.user._id.toString() === userId)) {
+      user = req.user;
+    } else {
+      // Validation/Lookup
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        user = await User.findById(userId);
+      }
+      if (!user) {
+        user = await User.findOne({ clerkId: userId });
+      }
+    }
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -102,7 +116,15 @@ router.get('/activity/:userId', async (req, res) => {
 router.put('/upgrade/:userId', async (req, res) => {
   try {
     const { packageType, duration = 30 } = req.body;
-    const user = await User.findById(req.params.userId);
+    const userId = req.params.userId;
+
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+    if (!user) {
+      user = await User.findOne({ clerkId: userId });
+    }
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });

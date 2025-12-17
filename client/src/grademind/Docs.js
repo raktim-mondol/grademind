@@ -229,15 +229,15 @@ Good:
         </div>
       </aside>
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto">
-        <main className="p-4 sm:p-6 lg:p-8">
+      <div className="flex-1 flex flex-col h-screen overflow-y-auto">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8">
           <div className="max-w-3xl mx-auto">
             {renderContent()}
           </div>
         </main>
 
         {/* Footer */}
-        <Footer 
+        <Footer
           onNavigate={onNavigate}
           onStart={onStart}
           onDocs={onDocs}
