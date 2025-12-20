@@ -27,10 +27,10 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Model configuration
 const model = genAI.getGenerativeModel({
-  model: process.env.GEMINI_MODEL || "gemini-2.5-pro", // Use environment variable with fallback
+  model: process.env.GEMINI_MODEL || "gemini-2.5-pro", // Use Gemini 2.5 Pro for best results
   generationConfig: {
-    temperature: 0.2, // Lower temperature for more deterministic grading
-    maxOutputTokens: 65536, // Maximum output tokens for Gemini 2.5 Pro
+    temperature: 1.0, // Google recommended default for Gemini 2.5 Pro
+    maxOutputTokens: 65536, // Maximum output tokens
     responseMimeType: "application/json", // Request JSON output directly
   },
   safetySettings: [
@@ -180,7 +180,7 @@ async function getGeminiResponse(prompt, jsonResponse = false) {
     const modelConfig = genAI.getGenerativeModel({
       model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
-        temperature: jsonResponse ? 0.1 : 0.4, // Lower temperature for JSON responses
+        temperature: 1.0, // Google recommended default
         maxOutputTokens: 65536,
         responseMimeType: jsonResponse ? "application/json" : "text/plain",
       },
@@ -216,7 +216,518 @@ async function getGeminiResponse(prompt, jsonResponse = false) {
 }
 
 /**
+ * Analyze rubric file with Gemini to extract grading schema
+ * Called ONCE during assignment creation to extract task/subtask structure
+ * @param {string} rubricFilePath - Path to rubric PDF file
+ * @returns {Object} Extracted schema with task structure and format
+ */
+async function analyzeRubricForSchema(rubricFilePath) {
+  console.log(`\n=== ANALYZING RUBRIC FOR SCHEMA EXTRACTION ===`);
+  console.log(`Rubric file: ${rubricFilePath}`);
+
+  try {
+    // Read PDF file and convert to base64
+    const fileBuffer = await fs.readFile(rubricFilePath);
+    const base64Data = fileBuffer.toString('base64');
+    const mimeType = 'application/pdf';
+
+    console.log(`✓ Rubric file loaded (${fileBuffer.length} bytes)`);
+
+    const extractionPrompt = `Analyze this grading rubric and extract the COMPLETE hierarchical task/subtask structure.
+
+=== CRITICAL REQUIREMENTS - READ CAREFULLY ===
+
+**MOST IMPORTANT RULES:**
+
+1. **NO DUPLICATES**
+   - NEVER create both "1.1" AND "1(1.1)" - these are the SAME item
+   - NEVER create both "Task 1.1" AND "1.1" - use ONLY "1.1"
+   - Each unique task/subtask appears EXACTLY ONCE in the output
+
+2. **MARKS IN PARENTHESES = TOTAL MARKS FOR THAT ITEM**
+   - "1.2 (4)" → sub_task_id: "1.2", marks: 4.0
+   - "3(2.1) (2)" → sub_task_id: "3.2.1", marks: 2.0
+   - "Task 1.1 (1)" → sub_task_id: "1.1", marks: 1.0
+   - The number in parentheses is ALWAYS the marks for that specific item
+
+**1. HIERARCHY PRESERVATION**
+   - Preserve ALL nesting levels from rubric: 1, 1.1, 1.1.1, 1.1.1.1, etc.
+   - If rubric shows "3.2.1" and "3.2.2" as separate items → KEEP THEM SEPARATE
+   - DO NOT aggregate marks at parent levels
+   - DO NOT create parent nodes that don't exist in rubric
+
+**2. ID FORMATTING - USE DOT NOTATION ONLY**
+   - Main tasks: "1", "2", "3" (simple numbers, NO "Task" prefix)
+   - Subtasks: "1.1", "1.2", "3.2.1", "3.2.2" (dot notation ONLY)
+   - NEVER use: "1(1.1)", "Task 1.1", "1a", "1(a)"
+   - Convert ALL formats to dot notation:
+     * "1(a)" → "1.1"
+     * "3(2.1)" → "3.2.1"
+     * "Task 1.1" → "1.1"
+     * "1.1.1(a)" → "1.1.1.1"
+
+**3. MARKS ASSIGNMENT - CRITICAL**
+   - **The number in parentheses is the TOTAL MARKS for that item**
+   - "1.2 (4)" → marks: 4.0
+   - "3.2.1 (2)" → marks: 2.0
+   - "3.2.2 (1)" → marks: 1.0
+   - DO NOT calculate parent marks unless explicitly stated
+   - Parent nodes (with children) get max_marks = sum of children
+   - Leaf nodes (no children) get marks = direct value from parentheses
+
+**4. STRUCTURE RULES**
+   - Use nested "sub_tasks" arrays for hierarchy
+   - Leaf nodes (with marks) should NOT have sub_tasks
+   - Parent nodes (with children) should NOT have marks, only max_marks
+
+=== EXAMPLE: MARKS FROM PARENTHESES ===
+
+**If rubric shows:**
+  1.1 (1)  1.2 (4)  1.3 (0.5)
+
+**Expected output:**
+{
+  "tasks": [
+    {
+      "task_id": "1",
+      "sub_tasks": [
+        {"sub_task_id": "1.1", "marks": 1.0},   // (1) → 1.0
+        {"sub_task_id": "1.2", "marks": 4.0},   // (4) → 4.0
+        {"sub_task_id": "1.3", "marks": 0.5}    // (0.5) → 0.5
+      ]
+    }
+  ]
+}
+
+=== EXAMPLE: WRONG vs CORRECT ===
+
+**WRONG (creates duplicates):**
+{
+  "tasks": [
+    {"task_id": "1", "sub_tasks": [
+      {"sub_task_id": "1.1", "marks": 1.0},
+      {"sub_task_id": "1(1.1)", "marks": 1.0},  // DUPLICATE!
+      {"sub_task_id": "Task 1.1", "marks": 1.0}  // DUPLICATE!
+    ]}
+  ]
+}
+
+**CORRECT (no duplicates):**
+{
+  "tasks": [
+    {"task_id": "1", "sub_tasks": [
+      {"sub_task_id": "1.1", "marks": 1.0}
+    ]}
+  ]
+}
+
+=== EXAMPLE: DEEP HIERARCHY WITH MARKS ===
+
+**If rubric shows:**
+  3.2.1 (2) - Analysis
+  3.2.2 (1) - Implementation
+
+**Expected output:**
+{
+  "tasks": [
+    {
+      "task_id": "3",
+      "sub_tasks": [
+        {
+          "sub_task_id": "3.2",
+          "sub_tasks": [
+            {
+              "sub_task_id": "3.2.1",
+              "description": "Analysis",
+              "marks": 2.0
+            },
+            {
+              "sub_task_id": "3.2.2",
+              "description": "Implementation",
+              "marks": 1.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+=== RETURN FORMAT ===
+
+{
+  "title": "Rubric title",
+  "total_marks": <total points>,
+  "format_type": "dot_notation",
+  "tasks": [
+    {
+      "task_id": "1",
+      "title": "Task title",
+      "max_marks": <sum of all marks in this task>,
+      "sub_tasks": [
+        {
+          "sub_task_id": "1.1",
+          "description": "Description",
+          "max_marks": <sum if has children>,
+          "marks": <direct value from parentheses if leaf>,
+          "sub_tasks": [...]
+        }
+      ]
+    }
+  ]
+}
+
+=== FINAL CHECKLIST ===
+✓ Each task/subtask ID appears ONCE
+✓ All IDs use dot notation (1.1, 3.2.1, etc.)
+✓ No "Task" prefix
+✓ No parentheses format (1(1.1))
+✓ Marks from parentheses: "1.2 (4)" → marks: 4.0
+✓ Hierarchy is preserved
+✓ No duplicate entries`;
+
+    const contents = [
+      {
+        parts: [
+          { text: extractionPrompt },
+          {
+            inlineData: {
+              mimeType: mimeType,
+              data: base64Data
+            }
+          }
+        ]
+      }
+    ];
+
+    const schemaExtractionModel = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
+      generationConfig: { temperature: 1.0, responseMimeType: "application/json" },
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+      ]
+    });
+
+    console.log(`Sending schema extraction request to Gemini...`);
+
+    const result = await withRetry(async () => {
+      const start = Date.now();
+      const response = await schemaExtractionModel.generateContent({ contents });
+      console.log(`Schema extraction completed in ${Date.now() - start}ms`);
+      return response;
+    });
+
+    const responseText = result.response.text();
+    console.log(`\n=== SCHEMA EXTRACTION RESPONSE ===`);
+    console.log(responseText);
+    console.log(`=== END SCHEMA EXTRACTION ===\n`);
+
+    const extractedSchema = JSON.parse(responseText);
+
+    if (!extractedSchema.tasks || !Array.isArray(extractedSchema.tasks)) {
+      throw new Error('Invalid schema: missing tasks array');
+    }
+
+    // Normalize task IDs to ensure consistent format
+    console.log(`🔧 Normalizing task IDs to dot notation format...`);
+    
+    // Recursive function to normalize IDs at any nesting level
+    function normalizeTaskIds(task, taskIdx, level = 0) {
+      const indent = '  '.repeat(level);
+      
+      // Normalize main task ID
+      const originalTaskId = task.task_id;
+      task.task_id = String(task.task_id)
+        .replace(/^Task\s*/i, '')  // Remove "Task" prefix
+        .replace(/[^\d.]/g, '');    // Keep only digits and dots for nested IDs
+
+      if (originalTaskId !== task.task_id) {
+        console.log(`${indent}Task ${taskIdx + 1}: "${originalTaskId}" → "${task.task_id}"`);
+      }
+
+      // Normalize subtask IDs recursively
+      if (task.sub_tasks && Array.isArray(task.sub_tasks)) {
+        task.sub_tasks.forEach((subtask, subIdx) => {
+          const originalSubId = subtask.sub_task_id;
+          let normalizedId = String(subtask.sub_task_id);
+
+          // Remove "Task" prefix
+          normalizedId = normalizedId.replace(/^Task\s*/i, '');
+
+          // Fix parenthetical format: "3(2.1)" → "3.2.1", "1(a)" → "1.1", "1.1.1(a)" → "1.1.1.1"
+          // This is the CRITICAL conversion that prevents duplicates like "1(1.1)"
+          normalizedId = normalizedId.replace(/(\d+(?:\.\d+)*)\(([^)]+)\)/g, (match, prefix, content) => {
+            // Handle letter or roman numeral in parentheses
+            if (/^[a-z]+$/i.test(content)) {
+              // Convert letters to numbers
+              if (/^[ivx]+$/i.test(content.toLowerCase())) {
+                // Roman numerals
+                const romanMap = { 'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5, 'vi': 6, 'vii': 7, 'viii': 8, 'ix': 9, 'x': 10 };
+                const num = romanMap[content.toLowerCase()] || content;
+                return `${prefix}.${num}`;
+              } else {
+                // Single letter
+                const letterNum = content.toLowerCase().charCodeAt(0) - 'a'.charCodeAt(0) + 1;
+                return `${prefix}.${letterNum}`;
+              }
+            }
+            // If it's already numeric, just use it
+            return `${prefix}.${content}`;
+          });
+
+          // Convert standalone letter suffixes: "1a" → "1.1", "1.2b" → "1.2.2"
+          normalizedId = normalizedId.replace(/(\d+(?:\.\d+)*)([a-z])$/i, (match, prefix, letter) => {
+            const letterNum = letter.toLowerCase().charCodeAt(0) - 'a'.charCodeAt(0) + 1;
+            return `${prefix}.${letterNum}`;
+          });
+
+          // Clean up any remaining non-numeric/dot characters
+          normalizedId = normalizedId.replace(/[^\d.]/g, '');
+
+          subtask.sub_task_id = normalizedId;
+
+          if (originalSubId !== normalizedId) {
+            console.log(`${indent}  Subtask: "${originalSubId}" → "${normalizedId}"`);
+          }
+
+          // Recursively normalize nested sub_tasks
+          if (subtask.sub_tasks && Array.isArray(subtask.sub_tasks)) {
+            normalizeTaskIds(subtask, subIdx, level + 2);
+          }
+        });
+      }
+    }
+
+    extractedSchema.tasks.forEach((task, taskIdx) => {
+      normalizeTaskIds(task, taskIdx, 1);
+    });
+
+    // CRITICAL: Remove any duplicate subtasks that may have been created
+    console.log(`🔧 Removing duplicate subtasks and validating marks...`);
+    
+    function removeDuplicateSubtasks(task, level = 0) {
+      const indent = '  '.repeat(level);
+      
+      if (task.sub_tasks && Array.isArray(task.sub_tasks)) {
+        const seenIds = new Set();
+        const uniqueSubtasks = [];
+        
+        task.sub_tasks.forEach((subtask, idx) => {
+          const subtaskId = subtask.sub_task_id;
+          
+          if (seenIds.has(subtaskId)) {
+            console.log(`${indent}⚠️  REMOVING DUPLICATE: ${subtaskId} (appears multiple times)`);
+          } else {
+            seenIds.add(subtaskId);
+            
+            // Validate marks are numeric
+            if (subtask.marks !== undefined && typeof subtask.marks !== 'number') {
+              console.log(`${indent}⚠️  Fixing marks for ${subtaskId}: "${subtask.marks}" → ${parseFloat(subtask.marks)}`);
+              subtask.marks = parseFloat(subtask.marks);
+            }
+            
+            // Validate max_marks are numeric
+            if (subtask.max_marks !== undefined && typeof subtask.max_marks !== 'number') {
+              console.log(`${indent}⚠️  Fixing max_marks for ${subtaskId}: "${subtask.max_marks}" → ${parseFloat(subtask.max_marks)}`);
+              subtask.max_marks = parseFloat(subtask.max_marks);
+            }
+            
+            uniqueSubtasks.push(subtask);
+            
+            // Recursively process nested subtasks
+            if (subtask.sub_tasks && Array.isArray(subtask.sub_tasks)) {
+              removeDuplicateSubtasks(subtask, level + 1);
+            }
+          }
+        });
+        
+        task.sub_tasks = uniqueSubtasks;
+      }
+    }
+
+    extractedSchema.tasks.forEach((task, taskIdx) => {
+      removeDuplicateSubtasks(task, 1);
+    });
+
+    let totalSubtasks = 0;
+    extractedSchema.tasks.forEach(task => {
+      if (task.sub_tasks && Array.isArray(task.sub_tasks)) {
+        totalSubtasks += task.sub_tasks.length;
+      }
+    });
+
+    console.log(`✓ Schema extracted and normalized: ${extractedSchema.tasks.length} tasks, ${totalSubtasks} subtasks, ${extractedSchema.total_marks} marks`);
+
+    return { success: true, schema: extractedSchema };
+
+  } catch (error) {
+    console.error('Error analyzing rubric for schema:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Build strict response schema based on rubric structure
+ * Enforces consistent subtask numbering format (e.g., "1.1", "3.2.1")
+ * @param {Object} assignmentData - Processed assignment data
+ * @param {Object} rubricData - Processed rubric data
+ * @returns {Object} JSON schema for Gemini API responseSchema parameter
+ */
+function buildEvaluationResponseSchema(assignmentData, rubricData) {
+  console.log('Building strict response schema for deterministic grading...');
+
+  // Prefer pre-extracted gradingSchema from assignment creation for consistency
+  const schemaSource = assignmentData?.gradingSchema || rubricData;
+  if (assignmentData?.gradingSchema) {
+    console.log('✓ Using pre-extracted gradingSchema from assignment');
+  } else {
+    console.log('⚠ No stored gradingSchema - building from rubricData');
+  }
+
+  // Extract subtask IDs and compute RELATIVE subsection numbers
+  // Maps: "1.1" -> relative "1", "3.2.1" -> relative "2.1"
+  const tasks = schemaSource?.tasks || [];
+  const allSubtaskIds = [];
+  const taskSubtaskMap = {}; // Map of task_id -> [{full, relative}]
+
+  if (tasks.length > 0) {
+    tasks.forEach(task => {
+      const taskId = String(task.task_id || task.id || '');
+      taskSubtaskMap[taskId] = [];
+
+      if (task.sub_tasks && task.sub_tasks.length > 0) {
+        task.sub_tasks.forEach(st => {
+          const fullId = String(st.sub_task_id || st.id || '');
+          allSubtaskIds.push(fullId);
+
+          // Extract RELATIVE ID by removing task prefix and separator
+          // "1.1" with taskId "1" -> "1", "3.2.1" with taskId "3" -> "2.1"
+          let relativeId = fullId;
+          if (fullId.startsWith(taskId)) {
+            relativeId = fullId.substring(taskId.length).replace(/^[.\-_]/, '');
+          }
+
+          taskSubtaskMap[taskId].push({ full: fullId, relative: relativeId, marks: st.marks });
+        });
+      }
+    });
+  }
+
+  // Build per-task breakdown with full->relative ID mapping
+  let taskBreakdown = '';
+  let relativeIdList = [];
+  Object.entries(taskSubtaskMap).forEach(([taskId, items]) => {
+    if (items.length > 0) {
+      const mappings = items.map(i => `${i.full}→'${i.relative}'`).join(', ');
+      taskBreakdown += ` Task${taskId}: ${mappings}.`;
+      relativeIdList.push(...items.map(i => i.relative));
+    }
+  });
+
+  const expectedFormat = allSubtaskIds.length > 0
+    ? `Use RELATIVE subsection numbers. Mapping:${taskBreakdown}`
+    : 'Use the subsection part of the ID only (e.g., for 1.1 use 1, for 3.2.1 use 2.1).';
+
+  const schema = {
+    type: "OBJECT",
+    properties: {
+      overallGrade: {
+        type: "NUMBER",
+        description: "Total score earned (sum of all subtask scores)"
+      },
+      totalPossible: {
+        type: "NUMBER",
+        description: "Maximum possible score for the assignment"
+      },
+      questionScores: {
+        type: "ARRAY",
+        description: `Detailed scores for each main task/question with subsections. ${expectedFormat}`,
+        items: {
+          type: "OBJECT",
+          properties: {
+            questionNumber: {
+              type: "STRING",
+              description: "Main question/task number ONLY (e.g., '1', '2', '3'). Do NOT use 'Task' prefix or include subsection numbers here."
+            },
+            questionText: {
+              type: "STRING",
+              description: "Brief description of the main question/task"
+            },
+            maxScore: {
+              type: "NUMBER",
+              description: "Maximum points for this entire question (sum of all subsection maxScores)"
+            },
+            earnedScore: {
+              type: "NUMBER",
+              description: "Total points earned for this question (sum of all subsection earnedScores)"
+            },
+            feedback: {
+              type: "STRING",
+              description: "Overall feedback for this question (optional if subsection feedback is detailed)"
+            },
+            subsections: {
+              type: "ARRAY",
+              description: `MANDATORY array. Create ONE entry for EACH subtask.${taskBreakdown}`,
+              items: {
+                type: "OBJECT",
+                properties: {
+                  subsectionNumber: {
+                    type: "STRING",
+                    description: `Subtask ID - use the EXACT ID from rubric. ${expectedFormat}. Do NOT modify or abbreviate the IDs.`
+                  },
+                  subsectionText: {
+                    type: "STRING",
+                    description: "Brief description of this specific subtask"
+                  },
+                  maxScore: {
+                    type: "NUMBER",
+                    description: "Maximum points for this subtask (must match rubric EXACTLY)"
+                  },
+                  earnedScore: {
+                    type: "NUMBER",
+                    description: "Points earned for this subtask (0 to maxScore)"
+                  },
+                  feedback: {
+                    type: "STRING",
+                    description: "Detailed feedback for this subtask (minimum 15 words)"
+                  }
+                },
+                required: ["subsectionNumber", "maxScore", "earnedScore", "feedback"]
+              }
+            }
+          },
+          required: ["questionNumber", "maxScore", "earnedScore", "subsections"]
+        }
+      },
+      strengths: {
+        type: "ARRAY",
+        description: "List of strengths observed in the submission (minimum 3 items)",
+        items: { type: "STRING" }
+      },
+      areasForImprovement: {
+        type: "ARRAY",
+        description: "Areas needing improvement (minimum 2 items). Format: 'Task X.Y: Specific issue and impact'",
+        items: { type: "STRING" }
+      },
+      suggestions: {
+        type: "ARRAY",
+        description: "Concrete, actionable suggestions for the student (minimum 2 items)",
+        items: { type: "STRING" }
+      }
+    },
+    required: ["overallGrade", "totalPossible", "questionScores", "strengths", "areasForImprovement", "suggestions"]
+  };
+
+  console.log(`✓ Schema built with ${allSubtaskIds.length} required subtasks: ${allSubtaskIds.join(', ')}`);
+  return schema;
+}
+
+/**
  * Evaluate student submission against assignment, rubric, and solution using direct file input
+
  * @param {Object} assignmentData - Processed assignment data
  * @param {Object} rubricData - Processed rubric data
  * @param {Object} solutionData - Processed solution data
@@ -625,14 +1136,35 @@ Provide your response ONLY as a valid JSON object matching the requested structu
     console.log(textPromptPart);
     console.log('=== GEMINI INPUT DEBUG INFO END ===\n');
 
+    // Build strict response schema for deterministic grading
+    const responseSchema = buildEvaluationResponseSchema(assignmentData, rubricData);
+
     console.log(`Sending multi-modal evaluation request to Gemini API for ${originalFileType} file (as ${mimeType}): ${submissionFilePath}`);
 
     try {
-      // --- Make the API Call --- 
+      // --- Make the API Call with Schema Enforcement --- 
       const result = await withRetry(async () => {
         const start = Date.now();
-        const response = await model.generateContent({ contents });
-        console.log(`Gemini API call completed in ${Date.now() - start}ms`);
+
+        // Create model with responseSchema enforcement
+        const modelWithSchema = genAI.getGenerativeModel({
+          model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
+          generationConfig: {
+            temperature: 1.0, // Google recommended default
+            maxOutputTokens: 65536,
+            responseMimeType: "application/json",
+            responseSchema: responseSchema // ENFORCE STRICT SCHEMA
+          },
+          safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+          ],
+        });
+
+        const response = await modelWithSchema.generateContent({ contents });
+        console.log(`Gemini API call with schema enforcement completed in ${Date.now() - start}ms`);
         return response;
       });
 
@@ -668,7 +1200,7 @@ Provide your response ONLY as a valid JSON object matching the requested structu
       }
 
       console.log(`Received and parsed JSON response from Gemini API.`);
-      console.log(`Parsed result summary: overallGrade=${parsedResult.overallGrade}, totalPossible=${parsedResult.totalPossible}, criteriaGrades=${parsedResult.criteriaGrades ? parsedResult.criteriaGrades.length : 0} items`);
+      console.log(`Parsed result summary: overallGrade=${parsedResult.overallGrade}, totalPossible=${parsedResult.totalPossible}, questionScores=${parsedResult.questionScores ? parsedResult.questionScores.length : 0} questions`);
 
       // Ensure totalPossible is included
       if (!parsedResult.totalPossible && totalPossibleScore > 0) {
@@ -676,69 +1208,29 @@ Provide your response ONLY as a valid JSON object matching the requested structu
         console.log(`Added missing totalPossible: ${totalPossibleScore}`);
       }
 
-      // Basic validation
-      if (typeof parsedResult.overallGrade !== 'number' || !Array.isArray(parsedResult.criteriaGrades)) {
-        throw new Error("Gemini response did not match the expected JSON structure.");
+      // Basic validation - now checks for questionScores (new schema)
+      if (typeof parsedResult.overallGrade !== 'number' || !Array.isArray(parsedResult.questionScores)) {
+        throw new Error("Gemini response did not match expected JSON structure (missing overallGrade or questionScores).");
       }
 
-      // *** CRITICAL VALIDATION: Ensure criteriaGrades has entries for ALL questions ***
-      console.log('\n=== CRITERIA GRADES VALIDATION START ===');
-      const questionNumbers = questionStructure.map(q => String(q.number));
-      console.log(`Expected questions from structure: [${questionNumbers.join(', ')}]`);
-      console.log(`Received criteriaGrades count: ${parsedResult.criteriaGrades.length}`);
+      // *** VALIDATION: Log questionScores structure ***
+      console.log('\n=== QUESTION SCORES VALIDATION START ===');
+      console.log(`Received ${parsedResult.questionScores.length} question(s) in evaluation`);
 
-      // Check which questions are covered in criteriaGrades
-      const coveredQuestions = new Set();
-      parsedResult.criteriaGrades.forEach(cg => {
-        const qNum = String(cg.questionNumber || '').replace(/[^\d]/g, '').split('')[0]; // Extract base question number
-        if (qNum) coveredQuestions.add(qNum);
+      const allSubtasks = [];
+      parsedResult.questionScores.forEach(qs => {
+        const qNum = String(qs.questionNumber);
+        console.log(`  Question ${qNum}: ${qs.earnedScore}/${qs.maxScore} marks`);
+        if (qs.subsections && qs.subsections.length > 0) {
+          qs.subsections.forEach(sub => {
+            const fullId = `${qNum}.${sub.subsectionNumber}`;
+            allSubtasks.push(fullId);
+            console.log(`    ${fullId}: ${sub.earnedScore}/${sub.maxScore}`);
+          });
+        }
       });
-
-      console.log(`Questions covered in criteriaGrades: [${Array.from(coveredQuestions).join(', ')}]`);
-
-      // Find missing questions
-      const missingQuestions = questionNumbers.filter(qn => !coveredQuestions.has(qn));
-
-      if (missingQuestions.length > 0) {
-        console.warn(`⚠️  WARNING: Missing criteriaGrades for questions: [${missingQuestions.join(', ')}]`);
-        console.warn(`⚠️  This violates the prompt requirement that EVERY question must have criteriaGrades entries`);
-        console.warn(`⚠️  LLM may not be following instructions properly. Consider re-running this submission.`);
-
-        // Log the actual criteriaGrades for debugging
-        console.log('Actual criteriaGrades received:');
-        parsedResult.criteriaGrades.forEach((cg, idx) => {
-          console.log(`  ${idx + 1}. Q${cg.questionNumber}: ${cg.criterionName} (${cg.score}/${cg.maxScore})`);
-        });
-      } else {
-        console.log(`✅ All questions have criteriaGrades entries`);
-      }
-
-      // Validate that criteriaGrades has detailed breakdown (multiple entries per question if subsections exist)
-      const questionCounts = {};
-      parsedResult.criteriaGrades.forEach(cg => {
-        const baseQ = String(cg.questionNumber || '').charAt(0);
-        questionCounts[baseQ] = (questionCounts[baseQ] || 0) + 1;
-      });
-
-      console.log('CriteriaGrades count per question:', questionCounts);
-
-      // Check if we have subsection-level detail in questionScores
-      if (parsedResult.questionScores && Array.isArray(parsedResult.questionScores)) {
-        parsedResult.questionScores.forEach(qs => {
-          if (qs.subsections && qs.subsections.length > 0) {
-            const qNum = String(qs.questionNumber);
-            const subsectionCount = qs.subsections.length;
-            const criteriaCount = questionCounts[qNum] || 0;
-
-            if (subsectionCount > 1 && criteriaCount === 1) {
-              console.warn(`⚠️  Question ${qNum} has ${subsectionCount} subsections but only ${criteriaCount} criteriaGrade entry`);
-              console.warn(`⚠️  Expected ${subsectionCount} separate criteriaGrade entries for detailed breakdown`);
-            }
-          }
-        });
-      }
-
-      console.log('=== CRITERIA GRADES VALIDATION END ===\n');
+      console.log(`Total subtasks: ${allSubtasks.length} [${allSubtasks.join(', ')}]`);
+      console.log('=== QUESTION SCORES VALIDATION END ===\n');
       // *** END VALIDATION ***
 
       // Clean up temporary PDF files if they were created from .ipynb
@@ -765,7 +1257,7 @@ Provide your response ONLY as a valid JSON object matching the requested structu
     return {
       overallGrade: 0,
       totalPossible: totalPossibleScore,
-      criteriaGrades: [],
+      questionScores: [],
       strengths: ["Could not evaluate due to technical error"],
       areasForImprovement: ["Resubmit for evaluation"],
       suggestions: ["Contact instructor for manual evaluation"],
@@ -1468,7 +1960,7 @@ Analyze the PDF document thoroughly and return ONLY a JSON object.`;
     const modelConfig = genAI.getGenerativeModel({
       model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
-        temperature: 0.1,
+        temperature: 1.0,
         maxOutputTokens: 65536,
         responseMimeType: "application/json",
       },
@@ -1609,7 +2101,7 @@ Return ONLY the JSON object. Ensure the JSON is complete and properly closed wit
     const modelConfig = genAI.getGenerativeModel({
       model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
-        temperature: 0.1,
+        temperature: 1.0,
         maxOutputTokens: 65536, // Maximum output tokens for Gemini 2.5 Pro
         // Removed responseMimeType to avoid potential truncation issues
       },
@@ -1772,31 +2264,73 @@ async function processRubricPDF(pdfFilePath, providedTotalPoints = null) {
     console.log(`Gemini Rubric Processing - Using total points: ${totalPoints}`);
 
     const prompt = `
-Analyze this rubric document and extract the grading criteria information. For each criterion, include:
-1. Question Number: The question or section number associated with the criterion (if available)
-2. Name: What is being evaluated
-3. Weight: How many points this criterion is worth
-4. Description: Brief explanation of what this criterion measures
-5. Marking Scale: Description of different performance levels and their corresponding scores
+Analyze this rubric document and extract the grading criteria information with COMPLETE hierarchical structure preservation.
 
-IMPORTANT INSTRUCTIONS:
-1. The total points for this assignment is ${totalPoints} points.
-2. Extract all grading criteria directly from the PDF document.
-3. If point values for criteria are provided, use those exact values.
-4. If specific criteria descriptions or marking scales are provided, extract those precisely.
-5. Ensure the weights (point values) of all criteria sum up to the total points (${totalPoints}).
-6. Do NOT invent criteria that aren't in the document.
+CRITICAL REQUIREMENTS:
+
+1. PRESERVE EXACT HIERARCHY AND MARKS
+   - Extract ALL grading criteria exactly as they appear in the rubric
+   - If rubric shows "3.2.1" (2 marks) and "3.2.2" (1 mark), keep them as SEPARATE criteria
+   - DO NOT aggregate marks at parent levels
+   - Preserve ALL nesting levels (1, 1.1, 1.1.1, 1.1.1.1, etc.)
+
+2. CRITERION STRUCTURE
+   Each criterion must include:
+   - question_number: The hierarchical ID (e.g., "1", "1.1", "3.2.1", "3.2.1.1")
+   - criterionName: What is being evaluated
+   - weight: Point value (numeric) - EXACT value from rubric
+   - description: Brief explanation of what this criterion measures
+   - marking_scale: Description of different performance levels (if provided)
+
+3. FORMATTING RULES
+   - Use dot notation for hierarchical IDs: "1", "1.1", "1.2", "3.2.1", "3.2.2"
+   - Convert parenthetical notation: "1(a)" → "1.1", "3.2(b)" → "3.2.2"
+   - Remove "Task" prefixes if present
+   - Preserve the exact structure from the rubric
+
+4. EXAMPLE - CORRECT EXTRACTION:
+   If rubric shows:
+     3.2.1 - Analysis (2 marks)
+     3.2.2 - Implementation (1 mark)
+   
+   Expected output:
+   {
+     "grading_criteria": [
+       {
+         "question_number": "3.2.1",
+         "criterionName": "Analysis",
+         "weight": 2.0,
+         "description": "Analysis of the problem",
+         "marking_scale": "N/A"
+       },
+       {
+         "question_number": "3.2.2",
+         "criterionName": "Implementation",
+         "weight": 1.0,
+         "description": "Implementation of the solution",
+         "marking_scale": "N/A"
+       }
+     ]
+   }
+
+5. IMPORTANT:
+   - Each item with marks gets its own criterion entry
+   - DO NOT create a "3.2" entry with 3 marks
+   - The grading_criteria array should be FLAT but preserve all hierarchical IDs
+   - Each criterion's weight should be its EXACT point value from the rubric
+
+6. The total points for this assignment is ${totalPoints} points.
 
 Return as JSON with the following structure:
 {
   "grading_criteria": [
-  {
-    "question_number": "Question or section number (if available)",
-    "criterionName": "Name of criterion",
-    "weight": "Point value (numeric)",
-    "description": "What this criterion evaluates",
-    "marking_scale": "Description of different performance levels"
-  }
+    {
+      "question_number": "Hierarchical ID (e.g., '1', '1.1', '3.2.1')",
+      "criterionName": "Name of criterion",
+      "weight": "Point value (numeric) - EXACT from rubric",
+      "description": "What this criterion evaluates",
+      "marking_scale": "Description of different performance levels"
+    }
   ],
   "extracted_total_points": "The total points you found in the document (or null if none found)",
   "total_points": ${totalPoints}
@@ -1808,7 +2342,7 @@ Analyze the PDF document and return ONLY a JSON object with this structure.`;
     const modelConfig = genAI.getGenerativeModel({
       model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
-        temperature: 0.1,
+        temperature: 1.0,
         maxOutputTokens: 65536,
         responseMimeType: "application/json",
       },
@@ -1965,31 +2499,73 @@ RETURN ONLY THE NUMERIC VALUE WITH NO EXPLANATION.`;
     console.log(`Gemini Rubric Processing - Using total points: ${totalPoints}`);
 
     const prompt = `
-Analyze this rubric document and extract the grading criteria information. For each criterion, include:
-1. Question Number: The question or section number associated with the criterion (if available)
-2. Name: What is being evaluated
-3. Weight: How many points this criterion is worth
-4. Description: Brief explanation of what this criterion measures
-5. Marking Scale: Description of different performance levels and their corresponding scores
+Analyze this rubric document and extract the grading criteria information with COMPLETE hierarchical structure preservation.
 
-IMPORTANT INSTRUCTIONS:
-1. The total points for this assignment is ${totalPoints} points.
-2. Extract all grading criteria directly from the PDF text.
-3. If point values for criteria are provided, use those exact values.
-4. If specific criteria descriptions or marking scales are provided, extract those precisely.
-5. Ensure the weights (point values) of all criteria sum up to the total points (${totalPoints}).
-6. Do NOT invent criteria that aren't in the document.
+CRITICAL REQUIREMENTS:
+
+1. PRESERVE EXACT HIERARCHY AND MARKS
+   - Extract ALL grading criteria exactly as they appear in the rubric
+   - If rubric shows "3.2.1" (2 marks) and "3.2.2" (1 mark), keep them as SEPARATE criteria
+   - DO NOT aggregate marks at parent levels
+   - Preserve ALL nesting levels (1, 1.1, 1.1.1, 1.1.1.1, etc.)
+
+2. CRITERION STRUCTURE
+   Each criterion must include:
+   - question_number: The hierarchical ID (e.g., "1", "1.1", "3.2.1", "3.2.1.1")
+   - criterionName: What is being evaluated
+   - weight: Point value (numeric) - EXACT value from rubric
+   - description: Brief explanation of what this criterion measures
+   - marking_scale: Description of different performance levels (if provided)
+
+3. FORMATTING RULES
+   - Use dot notation for hierarchical IDs: "1", "1.1", "1.2", "3.2.1", "3.2.2"
+   - Convert parenthetical notation: "1(a)" → "1.1", "3.2(b)" → "3.2.2"
+   - Remove "Task" prefixes if present
+   - Preserve the exact structure from the rubric
+
+4. EXAMPLE - CORRECT EXTRACTION:
+   If rubric shows:
+     3.2.1 - Analysis (2 marks)
+     3.2.2 - Implementation (1 mark)
+   
+   Expected output:
+   {
+     "grading_criteria": [
+       {
+         "question_number": "3.2.1",
+         "criterionName": "Analysis",
+         "weight": 2.0,
+         "description": "Analysis of the problem",
+         "marking_scale": "N/A"
+       },
+       {
+         "question_number": "3.2.2",
+         "criterionName": "Implementation",
+         "weight": 1.0,
+         "description": "Implementation of the solution",
+         "marking_scale": "N/A"
+       }
+     ]
+   }
+
+5. IMPORTANT:
+   - Each item with marks gets its own criterion entry
+   - DO NOT create a "3.2" entry with 3 marks
+   - The grading_criteria array should be FLAT but preserve all hierarchical IDs
+   - Each criterion's weight should be its EXACT point value from the rubric
+
+6. The total points for this assignment is ${totalPoints} points.
 
 Return as JSON with the following structure:
 {
   "grading_criteria": [
-  {
-    "question_number": "Question or section number (if available)",
-    "criterionName": "Name of criterion",
-    "weight": "Point value (numeric)",
-    "description": "What this criterion evaluates",
-    "marking_scale": "Description of different performance levels"
-  }
+    {
+      "question_number": "Hierarchical ID (e.g., '1', '1.1', '3.2.1')",
+      "criterionName": "Name of criterion",
+      "weight": "Point value (numeric) - EXACT from rubric",
+      "description": "What this criterion evaluates",
+      "marking_scale": "Description of different performance levels"
+    }
   ],
   "extracted_total_points": "The total points you found in the document (or null if none found)",
   "total_points": ${totalPoints}
@@ -2079,7 +2655,7 @@ Do NOT include any markdown formatting, code blocks, or explanatory text. Return
     const modelConfig = genAI.getGenerativeModel({
       model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
       generationConfig: {
-        temperature: 0.1,
+        temperature: 1.0,
         maxOutputTokens: 65536,
         responseMimeType: "application/json",
       },
@@ -2323,57 +2899,12 @@ async function orchestrateAssignmentData(assignmentData, rubricData, solutionDat
     }
 
     // Build a comprehensive prompt for orchestration
-    const prompt = `
-You are an educational content orchestrator. Your task is to validate and integrate assignment, rubric, and solution documents to ensure consistency and completeness for automated grading.
-
-You will receive three processed documents (some may be missing):
-1. Assignment data (ALWAYS present)
-2. Rubric data (OPTIONAL)
-3. Solution data (OPTIONAL)
-
-ASSIGNMENT DATA:
-${JSON.stringify(enhancedAssignmentData, null, 2)}
-
-RUBRIC DATA:
-${enhancedRubricData ? JSON.stringify(enhancedRubricData, null, 2) : 'NOT PROVIDED - Grading criteria will be derived from assignment'}
-
-SOLUTION DATA:
-${enhancedSolutionData ? JSON.stringify(enhancedSolutionData, null, 2) : 'NOT PROVIDED - Solution is optional'}
-
-YOUR TASKS:
-
-1. **VALIDATION**: Check for consistency and completeness:
-   ${enhancedRubricData ? `
-   - Verify that EACH assignment question has corresponding rubric criteria
-   - Check that rubric criteria total points match assignment total points
-   - Identify any rubric criteria that don't map to specific questions
-   - Ensure rubric question numbers match assignment question numbers` : ''}
-   ${enhancedSolutionData ? `
-   - Verify that solution covers all assignment questions
-   - Check that solution question numbers match assignment question numbers` : ''}
-   - Identify any inconsistencies in question numbering across documents
-
-2. **MAPPING**: Create integrated mappings:
-   ${enhancedRubricData ? `
-   - Map each assignment question to its rubric criteria
-   - Calculate expected points per question from rubric weights` : ''}
-   ${enhancedSolutionData ? `
-   - Map each assignment question to its solution
-   - Link solution steps to assignment requirements` : ''}
-
-3. **ISSUE DETECTION**: Identify problems:
-   - Missing rubric criteria for assignment questions
-   - Extra rubric criteria not tied to questions
-   - Missing solutions for assignment questions
-   - Point allocation mismatches
-   - Question numbering inconsistencies
-
-4. **RECOMMENDATIONS**: Provide actionable suggestions to improve grading accuracy
-
-OUTPUT REQUIREMENTS:
-Return a JSON object with this exact structure:
-
-{
+    const hasSolution = enhancedSolutionData && enhancedSolutionData.questions && enhancedSolutionData.questions.length > 0;
+    const hasRubric = enhancedRubricData && enhancedRubricData.grading_criteria && enhancedRubricData.grading_criteria.length > 0;
+    
+    // Build the output schema based on whether solution data exists
+    const outputSchema = hasSolution
+      ? `{
   "validation": {
     "isValid": <boolean>,
     "hasWarnings": <boolean>,
@@ -2450,9 +2981,140 @@ Return a JSON object with this exact structure:
       "hasCompleteSolution": <boolean>
     }
   }
-}
+}`
+      : `{
+  "validation": {
+    "isValid": <boolean>,
+    "hasWarnings": <boolean>,
+    "completenessScore": <number 0-100>,
+    "issues": [
+      {
+        "severity": "error|warning|info",
+        "category": "rubric|solution|numbering|points",
+        "message": "Description of the issue",
+        "affectedQuestions": ["question numbers"]
+      }
+    ]
+  },
+  "questionMapping": [
+    {
+      "questionNumber": "1",
+      "questionText": "Brief summary",
+      "assignmentPoints": <number>,
+      "rubricCriteria": [
+        {
+          "criterionName": "Name",
+          "weight": <number>,
+          "description": "Description",
+          "hasMapping": <boolean>
+        }
+      ],
+      "hasSolution": false,
+      "solutionSummary": "",
+      "totalMappedPoints": <number>,
+      "pointsConsistent": <boolean>
+    }
+  ],
+  "statistics": {
+    "totalQuestions": <number>,
+    "questionsWithRubric": <number>,
+    "questionsWithSolution": 0,
+    "totalAssignmentPoints": <number>,
+    "totalRubricPoints": <number>,
+    "pointsMatch": <boolean>
+  },
+  "recommendations": [
+    {
+      "priority": "high|medium|low",
+      "category": "rubric|solution|structure",
+      "recommendation": "Specific actionable suggestion"
+    }
+  ],
+  "integratedStructure": {
+    "questions": [
+      {
+        "number": "1",
+        "text": "Question text",
+        "points": <number>,
+        "requirements": ["requirement1", "requirement2"],
+        "rubricCriteria": [
+          {
+            "name": "Criterion name",
+            "weight": <number>,
+            "description": "Description",
+            "markingScale": "Scale if available"
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "totalPoints": <number>,
+      "numberOfQuestions": <number>,
+      "hasCompleteRubric": <boolean>,
+      "hasCompleteSolution": false
+    }
+  }
+}`;
+    
+    const prompt = `
+You are an educational content orchestrator. Your task is to validate and integrate assignment, rubric, and solution documents to ensure consistency and completeness for automated grading.
+
+You will receive three processed documents (some may be missing):
+1. Assignment data (ALWAYS present)
+2. Rubric data (OPTIONAL)
+3. Solution data (OPTIONAL)
+
+ASSIGNMENT DATA:
+${JSON.stringify(enhancedAssignmentData, null, 2)}
+
+RUBRIC DATA:
+${hasRubric ? JSON.stringify(enhancedRubricData, null, 2) : 'NOT PROVIDED - Grading criteria will be derived from assignment'}
+
+SOLUTION DATA:
+${hasSolution ? JSON.stringify(enhancedSolutionData, null, 2) : 'NOT PROVIDED - Solution is optional'}
+
+YOUR TASKS:
+
+1. **VALIDATION**: Check for consistency and completeness:
+   ${hasRubric ? `
+   - Verify that EACH assignment question has corresponding rubric criteria
+   - Check that rubric criteria total points match assignment total points
+   - Identify any rubric criteria that don't map to specific questions
+   - Ensure rubric question numbers match assignment question numbers` : ''}
+   ${hasSolution ? `
+   - Verify that solution covers all assignment questions
+   - Check that solution question numbers match assignment question numbers` : ''}
+   - Identify any inconsistencies in question numbering across documents
+
+2. **MAPPING**: Create integrated mappings:
+   ${hasRubric ? `
+   - Map each assignment question to its rubric criteria
+   - Calculate expected points per question from rubric weights` : ''}
+   ${hasSolution ? `
+   - Map each assignment question to its solution
+   - Link solution steps to assignment requirements` : ''}
+
+3. **ISSUE DETECTION**: Identify problems:
+   - Missing rubric criteria for assignment questions
+   - Extra rubric criteria not tied to questions
+   ${hasSolution ? '- Missing solutions for assignment questions' : ''}
+   - Point allocation mismatches
+   - Question numbering inconsistencies
+
+4. **RECOMMENDATIONS**: Provide actionable suggestions to improve grading accuracy
+
+OUTPUT REQUIREMENTS:
+Return a JSON object with this exact structure:
+
+${outputSchema}
 
 IMPORTANT: Your response must be ONLY valid JSON. Ensure all fields are present and properly formatted.
+
+CRITICAL INSTRUCTION:
+- If NO solution data was provided (SOLUTION DATA says "NOT PROVIDED"), DO NOT include any solution information in the output
+- The output schema above already reflects this - solution fields are removed when no solution data exists
+- DO NOT generate or create solution content if it was not provided
+- Only include solution information if it exists in the input data
 `;
 
     console.log('\n=== ORCHESTRATION PROMPT DEBUG START ===');
@@ -2609,32 +3271,78 @@ async function processRubricContent(extractedContent, providedTotalPoints = null
     ? extractedContent
     : JSON.stringify(extractedContent, null, 2);
 
-  const prompt = `You are an expert rubric analyzer. Analyze the following extracted rubric content and provide a comprehensive structured output.
+  const prompt = `You are an expert rubric analyzer. Analyze the following extracted rubric content and provide a comprehensive structured output with COMPLETE hierarchical structure preservation.
 
 EXTRACTED CONTENT:
 ${contentText}
 
 ${providedTotalPoints ? `Total points provided: ${providedTotalPoints}` : ''}
 
-Analyze this content and return a JSON object with the following structure:
+CRITICAL REQUIREMENTS:
+
+1. PRESERVE EXACT HIERARCHY AND MARKS
+   - Extract ALL grading criteria exactly as they appear in the rubric
+   - If rubric shows "3.2.1" (2 marks) and "3.2.2" (1 mark), keep them as SEPARATE criteria
+   - DO NOT aggregate marks at parent levels
+   - Preserve ALL nesting levels (1, 1.1, 1.1.1, 1.1.1.1, etc.)
+
+2. CRITERION STRUCTURE
+   Each criterion must include:
+   - question_number: The hierarchical ID (e.g., "1", "1.1", "3.2.1", "3.2.1.1")
+   - criterionName: What is being evaluated
+   - weight: Point value (numeric) - EXACT value from rubric
+   - description: Brief explanation of what this criterion measures
+   - marking_scale: Description of different performance levels (if provided)
+
+3. FORMATTING RULES
+   - Use dot notation for hierarchical IDs: "1", "1.1", "1.2", "3.2.1", "3.2.2"
+   - Convert parenthetical notation: "1(a)" → "1.1", "3.2(b)" → "3.2.2"
+   - Remove "Task" prefixes if present
+   - Preserve the exact structure from the rubric
+
+4. EXAMPLE - CORRECT EXTRACTION:
+   If rubric shows:
+     3.2.1 - Analysis (2 marks)
+     3.2.2 - Implementation (1 mark)
+   
+   Expected output:
+   {
+     "grading_criteria": [
+       {
+         "question_number": "3.2.1",
+         "criterionName": "Analysis",
+         "weight": 2.0,
+         "description": "Analysis of the problem",
+         "marking_scale": "N/A"
+       },
+       {
+         "question_number": "3.2.2",
+         "criterionName": "Implementation",
+         "weight": 1.0,
+         "description": "Implementation of the solution",
+         "marking_scale": "N/A"
+       }
+     ]
+   }
+
+5. IMPORTANT:
+   - Each item with marks gets its own criterion entry
+   - DO NOT create a "3.2" entry with 3 marks
+   - The grading_criteria array should be FLAT but preserve all hierarchical IDs
+   - Each criterion's weight should be its EXACT point value from the rubric
+
+6. Return as JSON with the following structure:
 {
   "grading_criteria": [
     {
-      "question_number": "1",
-      "criterionName": "Criterion name",
-      "weight": 10,
-      "description": "What this criterion measures",
-      "marking_scale": "Performance level descriptions",
-      "subcriteria": [
-        {
-          "name": "Subcriterion name",
-          "weight": 5,
-          "description": "Description"
-        }
-      ]
+      "question_number": "Hierarchical ID (e.g., '1', '1.1', '3.2.1')",
+      "criterionName": "Name of criterion",
+      "weight": "Point value (numeric) - EXACT from rubric",
+      "description": "What this criterion evaluates",
+      "marking_scale": "Description of different performance levels"
     }
   ],
-  "total_points": 100,
+  "total_points": ${providedTotalPoints || 100},
   "grading_scale": {
     "A": "90-100",
     "B": "80-89",
@@ -2644,12 +3352,7 @@ Analyze this content and return a JSON object with the following structure:
   }
 }
 
-Important:
-- Extract ALL grading criteria
-- Map criteria to specific questions where possible
-- Include point values/weights for each criterion
-- Extract any performance level descriptions
-- Be thorough and accurate`;
+Analyze this content and return ONLY a JSON object with this structure.`;
 
   try {
     const response = await getGeminiResponse(prompt, true);
@@ -3010,5 +3713,7 @@ module.exports = {
   processRubricContent,
   processSolutionContent,
   evaluateWithExtractedContent,
-  extractRubricFromContent
+  extractRubricFromContent,
+  // Schema extraction for consistent grading
+  analyzeRubricForSchema
 };

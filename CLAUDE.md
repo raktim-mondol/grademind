@@ -1059,6 +1059,12 @@ useEffect(() => {
 - **User Flow**: Must delete existing submission before re-uploading same filename
 - **Reference**: `DUPLICATE_FILE_PREVENTION.md`, `DUPLICATE_FILE_PREVENTION_SUMMARY.md`
 
+**Rubric Schema Deduplication** (FIXED):
+- **Issue**: Schema extraction creating redundant entries like "1.1" and "1(1.1)"
+- **Cause**: Prompt ambiguity + no post-processing deduplication
+- **Fix**: Enhanced prompt + deduplication function after normalization
+- **Reference**: `RUBRIC_SCHEMA_DEDUPLICATION_FIX.md`, `CHANGES_SUMMARY_RUBRIC_FIX.md`
+
 ---
 
 ## Best Practices for AI Assistants

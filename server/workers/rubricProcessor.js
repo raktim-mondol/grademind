@@ -3,7 +3,7 @@
  * Processes rubric documents using Landing AI for extraction and Gemini API for processing
  */
 const { rubricProcessingQueue } = require('../config/queue');
-const { processRubricPDF, processRubricContent } = require('../utils/geminiService');
+const { processRubricPDF, processRubricContent, analyzeRubricForSchema } = require('../utils/geminiService');
 const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
 const { Assignment } = require('../models/assignment');
 const { updateAssignmentEvaluationReadiness, checkAndTriggerOrchestration } = require('../utils/assignmentUtils');
@@ -91,27 +91,53 @@ rubricProcessingQueue.process(async (job) => {
         rubricExtractionNotes: 'Processed from separate rubric file'
       });
     }
-    
+
     // Check if the assignment is now ready for evaluation
     const readyStatus = await updateAssignmentEvaluationReadiness(assignmentId);
     console.log(`Rubric for assignment ${assignmentId} processed successfully. Evaluation ready status: ${readyStatus}`);
-    
+
+    // Extract grading schema for consistent evaluation
+    console.log(`📊 Extracting grading schema for consistent evaluation...`);
+    try {
+      const schemaResult = await analyzeRubricForSchema(pdfFilePath);
+      if (schemaResult.success) {
+        await Assignment.findByIdAndUpdate(assignmentId, {
+          gradingSchema: schemaResult.schema,
+          gradingSchemaStatus: 'completed',
+          gradingSchemaExtractedAt: new Date()
+        });
+        console.log(`✓ Grading schema extracted: ${schemaResult.schema.tasks?.length || 0} tasks, ${schemaResult.schema.total_marks || '?'} marks`);
+      } else {
+        console.warn(`⚠️ Schema extraction failed: ${schemaResult.error}`);
+        await Assignment.findByIdAndUpdate(assignmentId, {
+          gradingSchemaStatus: 'failed',
+          gradingSchemaError: schemaResult.error
+        });
+      }
+    } catch (schemaError) {
+      console.error(`Schema extraction error:`, schemaError.message);
+      await Assignment.findByIdAndUpdate(assignmentId, {
+        gradingSchemaStatus: 'failed',
+        gradingSchemaError: schemaError.message
+      });
+    }
+
     // Check if we should trigger orchestration
     await checkAndTriggerOrchestration(assignmentId);
-    
+
     return { success: true, assignmentId, processedRubric, readyStatus };
   } catch (error) {
     console.error(`Error processing rubric for assignment ${assignmentId}:`, error);
-    
+
     // Update the assignment status to failed
     await Assignment.findByIdAndUpdate(assignmentId, {
       rubricProcessingStatus: 'failed',
       rubricProcessingError: error.message
     });
-    
+
     // Check if the assignment is ready for evaluation (it won't be if the rubric failed)
     await updateAssignmentEvaluationReadiness(assignmentId);
-    
+
     throw error;
   }
 });

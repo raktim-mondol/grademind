@@ -1,0 +1,98 @@
+================================================================================
+RUBRIC SCHEMA DEDUPLICATION FIX - IMPLEMENTATION COMPLETE
+================================================================================
+
+ISSUES RESOLVED:
+----------------
+1. Redundant task entries:
+   Input:  Task 1.1 (1)  Task 1.2 (0.5)  Task 1(1.1) (1)  Task 1(1.2) (0.5)
+   Bug:    Created both "1.1" AND "1(1.1)" (duplicates)
+   Fixed:  Creates only "1.1" and "1.2" (no duplicates)
+
+2. Marks from parentheses:
+   Input:  1.2 (4)
+   Bug:    Could result in incorrect marks or string values
+   Fixed:  Always extracts marks: {"sub_task_id": "1.2", "marks": 4.0}
+
+ROOT CAUSE:
+-----------
+1. Prompt wasn't explicit enough about preventing duplicates
+2. No post-processing deduplication after normalization
+3. Gemini interpreted same rubric items in multiple formats
+
+SOLUTION IMPLEMENTED:
+---------------------
+1. ✅ Enhanced extraction prompt (server/utils/geminiService.js, lines 236-361)
+   - Added "NO DUPLICATES" as first rule
+   - Explicit examples of WRONG vs CORRECT
+   - Clear conversion rules
+
+2. ✅ Added deduplication function (server/utils/geminiService.js, lines 481-513)
+   - Removes duplicate subtasks after normalization
+   - Recursively processes nested levels
+   - Logs removed duplicates for debugging
+
+3. ✅ Improved code comments (server/utils/geminiService.js, line 434)
+   - Clarified critical conversion logic
+   - Explained why it prevents duplicates
+
+FILES MODIFIED:
+---------------
+✓ server/utils/geminiService.js
+
+FILES CREATED:
+--------------
+✓ server/test-schema-deduplication.js (test suite)
+✓ RUBRIC_SCHEMA_DEDUPLICATION_FIX.md (detailed documentation)
+✓ CHANGES_SUMMARY_RUBRIC_FIX.md (change summary)
+✓ QUICK_REFERENCE_RUBRIC_FIX.md (quick reference)
+✓ FIX_SUMMARY.txt (this file)
+
+TESTING:
+--------
+Run: cd server && node test-schema-deduplication.js
+
+Expected output:
+  ✅ Mock Data Test: PASSED
+  ✅ Real File Test: PASSED
+  ✅ ALL TESTS PASSED
+
+VERIFICATION:
+-------------
+1. Check logs during extraction show:
+   - "🔧 Normalizing task IDs..."
+   - "🔧 Removing duplicate subtasks..."
+   - "✓ Schema extracted and normalized..."
+
+2. Check database schema has unique sub_task_id values
+
+3. Test with rubric containing: Task 1.1 (1)  Task 1(1.1) (1)
+   Should result in: Only "1.1" with marks 1.0
+
+IMPACT:
+-------
+✅ Prevents duplicate task/subtask entries
+✅ Ensures consistent dot notation format
+✅ Improves evaluation accuracy
+✅ Fixes Excel export issues
+✅ Better debugging with detailed logs
+✅ Comprehensive test coverage
+
+BACKWARD COMPATIBILITY:
+-----------------------
+✅ No breaking changes
+✅ Existing schemas cleaned on next extraction
+✅ All functionality preserved
+✅ No database schema changes
+
+DOCUMENTATION:
+--------------
+- Full technical details: RUBRIC_SCHEMA_DEDUPLICATION_FIX.md
+- Change summary: CHANGES_SUMMARY_RUBRIC_FIX.md
+- Quick reference: QUICK_REFERENCE_RUBRIC_FIX.md
+- Updated: CLAUDE.md (section 10. Recent Bug Fixes)
+
+================================================================================
+STATUS: ✅ COMPLETE AND READY FOR TESTING
+================================================================================
+

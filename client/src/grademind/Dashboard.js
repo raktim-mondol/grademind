@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Users, Brain, Loader2, FileText, CheckCircle, X, BarChart3, Download, ChevronLeft, ChevronRight, Plus, LayoutGrid, Trash2, Pencil, Cpu, Menu, PieChart, Code, BookOpen, Sparkles } from './Icons';
+import { Upload, Users, Brain, Loader2, FileText, CheckCircle, X, BarChart3, Download, ChevronLeft, ChevronRight, Plus, LayoutGrid, Trash2, Pencil, Cpu, Menu, PieChart, Code, BookOpen, Sparkles, RefreshCw } from './Icons';
 import api from '../utils/api';
 
 const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
@@ -18,7 +18,10 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
   // Processing status state
   const [processingStatus, setProcessingStatus] = useState(null);
   const [showProcessedData, setShowProcessedData] = useState(false);
-  const [activeDataSection, setActiveDataSection] = useState('assignment'); // 'assignment', 'rubric', 'solution'
+  const [activeDataSection, setActiveDataSection] = useState('assignment'); // 'assignment', 'rubric', 'solution', 'schema'
+  
+  // Flag to track if we're in manual evaluation mode (to skip automatic polling)
+  const [isManualEvaluation, setIsManualEvaluation] = useState(false);
 
   const fileInputRef = useRef(null);
   const activeSection = assignment.sections.find(s => s.id === activeSectionId);
@@ -176,6 +179,87 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
     fetchSubmissions();
   }, [assignment.backendId, assignment.sections.length]); // Re-run when sections are created
 
+  // Poll for submission status updates when there are pending/grading submissions
+  // Skip this polling when in manual evaluation mode to avoid conflicts
+  useEffect(() => {
+    if (!assignment.backendId || isManualEvaluation) return;
+
+    // Check if there are any students that need status updates
+    const allStudents = assignment.sections.flatMap(s => s.students || []);
+    const pendingStudents = allStudents.filter(
+      s => (s.status === 'grading' || s.status === 'pending') && s.backendId
+    );
+
+    // If no students are pending/grading with backend IDs, don't poll
+    if (pendingStudents.length === 0) return;
+
+    console.log(`📊 Polling for ${pendingStudents.length} pending/grading submissions...`);
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const token = await window.Clerk?.session?.getToken();
+        const response = await api.get(`/submissions/${assignment.backendId}`, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+
+        if (response.data?.submissions && response.data.submissions.length > 0) {
+          let hasChanges = false;
+
+          const updatedSections = assignment.sections.map(section => {
+            const updatedStudents = section.students.map(student => {
+              // Find matching backend submission
+              const backendSubmission = response.data.submissions.find(
+                sub => sub._id === student.backendId || sub._id === student.id
+              );
+
+              if (backendSubmission) {
+                const newStatus = backendSubmission.evaluationStatus === 'completed' ? 'completed' :
+                  backendSubmission.evaluationStatus === 'failed' ? 'error' :
+                    backendSubmission.evaluationStatus === 'processing' ? 'grading' : 'pending';
+
+                // Check if status or results have changed
+                const statusChanged = student.status !== newStatus;
+                const hasNewResult = backendSubmission.evaluationResult && !student.result;
+
+                if (statusChanged || hasNewResult) {
+                  hasChanges = true;
+                  console.log(`✅ Updated ${student.name}: ${student.status} -> ${newStatus}`);
+
+                  return {
+                    ...student,
+                    status: newStatus,
+                    result: backendSubmission.evaluationResult ? {
+                      score: backendSubmission.evaluationResult.overallGrade ?? backendSubmission.overallGrade ?? 0,
+                      maxScore: backendSubmission.evaluationResult.totalPossible ?? backendSubmission.totalPossible ?? 100,
+                      letterGrade: backendSubmission.evaluationResult.letterGrade || '',
+                      feedback: backendSubmission.evaluationResult.feedback || '',
+                      strengths: backendSubmission.evaluationResult.strengths || [],
+                      weaknesses: backendSubmission.evaluationResult.areasForImprovement || [],
+                      actionableTips: backendSubmission.evaluationResult.actionableTips || '',
+                      lostMarks: backendSubmission.evaluationResult.lostMarks || [],
+                      questionScores: backendSubmission.evaluationResult.questionScores || []
+                    } : student.result
+                  };
+                }
+              }
+              return student;
+            });
+
+            return { ...section, students: updatedStudents };
+          });
+
+          if (hasChanges) {
+            onUpdateAssignment({ ...assignment, sections: updatedSections });
+          }
+        }
+      } catch (error) {
+        console.error('Error polling submission status:', error);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [assignment.backendId, assignment.sections, isManualEvaluation]);
+
   // Check if processing is complete - only when ALL documents are processed
   const isProcessingComplete = processingStatus?.evaluationReadyStatus === 'ready';
 
@@ -267,6 +351,113 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
     }
   };
 
+  const handleRetryEvaluation = async (student, e) => {
+    e.stopPropagation();
+
+    if (!student.backendId) {
+      alert('Cannot retry: This submission does not have a backend ID. Please re-upload the submission.');
+      return;
+    }
+
+    try {
+      // Update status to grading
+      const updatedSections = assignment.sections.map(section => {
+        if (section.id === activeSectionId) {
+          return {
+            ...section,
+            students: section.students.map(s =>
+              s.id === student.id ? { ...s, status: 'grading' } : s
+            )
+          };
+        }
+        return section;
+      });
+      onUpdateAssignment({ ...assignment, sections: updatedSections });
+
+      // Call backend rerun endpoint
+      const token = await window.Clerk?.session?.getToken();
+      await api.post(`/submissions/${student.backendId}/rerun`, {}, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+
+      // Poll for status updates
+      const pollInterval = setInterval(async () => {
+        try {
+          const token = await window.Clerk?.session?.getToken();
+          const response = await api.get(`/submissions/${assignment.backendId}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+          });
+
+          const updatedSubmission = response.data?.submissions?.find(s => s._id === student.backendId);
+
+          if (updatedSubmission) {
+            const newStatus = updatedSubmission.evaluationStatus === 'completed' ? 'completed' :
+              updatedSubmission.evaluationStatus === 'failed' ? 'error' :
+                updatedSubmission.evaluationStatus === 'processing' ? 'grading' : 'pending';
+
+            // Update the student in local state
+            const updatedSections = assignment.sections.map(section => {
+              if (section.id === activeSectionId) {
+                return {
+                  ...section,
+                  students: section.students.map(s => {
+                    if (s.id === student.id || s.backendId === student.backendId) {
+                      return {
+                        ...s,
+                        status: newStatus,
+                        result: updatedSubmission.evaluationResult ? {
+                          score: updatedSubmission.evaluationResult.overallGrade ?? updatedSubmission.overallGrade ?? 0,
+                          maxScore: updatedSubmission.evaluationResult.totalPossible ?? updatedSubmission.totalPossible ?? 100,
+                          letterGrade: updatedSubmission.evaluationResult.letterGrade || '',
+                          feedback: updatedSubmission.evaluationResult.feedback || '',
+                          strengths: updatedSubmission.evaluationResult.strengths || [],
+                          weaknesses: updatedSubmission.evaluationResult.areasForImprovement || [],
+                          actionableTips: updatedSubmission.evaluationResult.actionableTips || '',
+                          lostMarks: updatedSubmission.evaluationResult.lostMarks || [],
+                          questionScores: updatedSubmission.evaluationResult.questionScores || []
+                        } : null
+                      };
+                    }
+                    return s;
+                  })
+                };
+              }
+              return section;
+            });
+            onUpdateAssignment({ ...assignment, sections: updatedSections });
+
+            // Stop polling if evaluation is complete or failed
+            if (newStatus === 'completed' || newStatus === 'error') {
+              clearInterval(pollInterval);
+            }
+          }
+        } catch (error) {
+          console.error('Error polling submission status:', error);
+        }
+      }, 3000); // Poll every 3 seconds
+
+      // Stop polling after 5 minutes max
+      setTimeout(() => clearInterval(pollInterval), 300000);
+    } catch (error) {
+      console.error('Error retrying evaluation:', error);
+      alert(`Failed to retry evaluation: ${error.response?.data?.error || error.message}`);
+
+      // Reset status back to error
+      const updatedSections = assignment.sections.map(section => {
+        if (section.id === activeSectionId) {
+          return {
+            ...section,
+            students: section.students.map(s =>
+              s.id === student.id ? { ...s, status: 'error' } : s
+            )
+          };
+        }
+        return section;
+      });
+      onUpdateAssignment({ ...assignment, sections: updatedSections });
+    }
+  };
+
   const handleRenameStart = (section, e) => {
     e.stopPropagation();
     setEditingSectionId(section.id);
@@ -310,8 +501,8 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
 
       // Check if a student with the same filename already exists in this section
       const isDuplicate = activeSection.students.some(
-        student => student.file?.name === fileName || 
-                   `${student.name}.${fileExtension}` === fileName
+        student => student.file?.name === fileName ||
+          `${student.name}.${fileExtension}` === fileName
       );
 
       if (isDuplicate) {
@@ -371,91 +562,189 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
   const runEvaluation = async () => {
     if (!activeSection) return;
     setIsProcessing(true);
+    setIsManualEvaluation(true); // Enable manual evaluation mode
     setProgress(0);
 
     let processedCount = 0;
     const studentsToGrade = [...activeSection.students];
 
-    for (let i = 0; i < studentsToGrade.length; i++) {
-      if (studentsToGrade[i].status !== 'completed') {
-        studentsToGrade[i].status = 'grading';
+    try {
+      for (let i = 0; i < studentsToGrade.length; i++) {
+        if (studentsToGrade[i].status !== 'completed') {
+          studentsToGrade[i].status = 'grading';
 
-        const currentSectionState = { ...activeSection, students: [...studentsToGrade] };
-        const updatedSectionsState = assignment.sections.map(s => s.id === activeSection.id ? currentSectionState : s);
-        onUpdateAssignment({ ...assignment, sections: updatedSectionsState });
+          // Update UI immediately to show grading status
+          const currentSectionState = { ...activeSection, students: [...studentsToGrade] };
+          const updatedSectionsState = assignment.sections.map(s => s.id === activeSection.id ? currentSectionState : s);
+          onUpdateAssignment({ ...assignment, sections: updatedSectionsState });
 
-        try {
-          let response;
+          try {
+            let response;
 
-          // Check if this is a PDF or IPYNB file that needs to be uploaded
-          if ((studentsToGrade[i].fileType === 'pdf' || studentsToGrade[i].fileType === 'ipynb') && studentsToGrade[i].file) {
-            // Use FormData to upload the file
-            const formData = new FormData();
-            formData.append('file', studentsToGrade[i].file);
-            formData.append('config', JSON.stringify(assignment.config));
+            // Check if this is a PDF or IPYNB file that needs to be uploaded
+            if ((studentsToGrade[i].fileType === 'pdf' || studentsToGrade[i].fileType === 'ipynb') && studentsToGrade[i].file) {
+              // Use FormData to upload the file to the submissions endpoint
+              const formData = new FormData();
+              formData.append('submission', studentsToGrade[i].file); // Backend expects 'submission' field name
+              formData.append('assignmentId', assignment.backendId);
+              formData.append('studentId', studentsToGrade[i].id);
+              formData.append('studentName', studentsToGrade[i].name);
 
-            console.log(`📄 Uploading ${studentsToGrade[i].fileType.toUpperCase()} for evaluation: ${studentsToGrade[i].name}`);
+              console.log(`📄 Uploading ${studentsToGrade[i].fileType.toUpperCase()} for evaluation: ${studentsToGrade[i].id} - ${studentsToGrade[i].name}`);
 
-            response = await api.post('/grademind/evaluate', formData, {
-              headers: {
-                'Content-Type': 'multipart/form-data'
-              }
-            });
-          } else {
-            // Send text content directly
-            response = await api.post('/grademind/evaluate', {
-              config: assignment.config,
-              studentContent: studentsToGrade[i].content
-            });
-          }
-
-          studentsToGrade[i].result = response.data;
-          studentsToGrade[i].status = 'completed';
-
-          // Save result to database for CSV export
-          if (assignment.backendId) {
-            try {
               const token = await window.Clerk?.session?.getToken();
-              await api.post('/grademind/save-result', {
-                assignmentId: assignment.backendId,
-                studentName: studentsToGrade[i].name,
-                studentId: studentsToGrade[i].name,
-                evaluationResult: response.data,
-                sectionName: activeSection.name
-              }, {
-                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+              response = await api.post('/submissions/single', formData, {
+                headers: {
+                  'Content-Type': 'multipart/form-data',
+                  ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                }
               });
-              console.log(`✅ Saved result for ${studentsToGrade[i].name} to database`);
-            } catch (saveError) {
-              console.error('Error saving result to database:', saveError);
-              // Don't fail the evaluation if save fails
+            } else {
+              // Text content is not supported by the current backend
+              // This would require a different endpoint or implementation
+              throw new Error('Text file evaluation is not currently supported. Please upload PDF or IPYNB files.');
             }
+
+            // Backend returns a submission object that gets queued for processing
+            // The evaluation happens asynchronously via the queue system
+            const submissionData = response.data.submission;
+
+            // Store the backend submission ID so we can poll for results
+            studentsToGrade[i].backendId = submissionData._id;
+
+            console.log(`✅ Submission uploaded successfully: ${submissionData._id}`);
+            console.log(`   Waiting for evaluation to complete...`);
+
+            // Update UI to show the backendId
+            const currentSectionState = { ...activeSection, students: [...studentsToGrade] };
+            const updatedSectionsState = assignment.sections.map(s => s.id === activeSection.id ? currentSectionState : s);
+            onUpdateAssignment({ ...assignment, sections: updatedSectionsState });
+
+            // **NEW: Wait for evaluation to complete before moving to next student**
+            // This function will update the student object with results
+            await waitForStudentEvaluation(submissionData._id, studentsToGrade[i], assignment.backendId, assignment.config?.totalScore || 100);
+
+            // **CRITICAL: Update UI immediately after evaluation completes**
+            const completedSectionState = { ...activeSection, students: [...studentsToGrade] };
+            const completedSectionsState = assignment.sections.map(s => s.id === activeSection.id ? completedSectionState : s);
+            onUpdateAssignment({ ...assignment, sections: completedSectionsState });
+
+          } catch (error) {
+            console.error('Evaluation error:', error);
+            // Show error and mark as failed (not completed)
+            studentsToGrade[i].result = {
+              score: 0,
+              maxScore: assignment.config?.totalScore || 100,
+              letterGrade: 'F',
+              feedback: `Evaluation failed: ${error.response?.data?.error || error.message}`,
+              strengths: [],
+              weaknesses: ['Evaluation could not be completed'],
+              actionableTips: 'Please try again or contact support if the issue persists.'
+            };
+            studentsToGrade[i].status = 'error';
+            
+            // Update UI for error state
+            const errorSectionState = { ...activeSection, students: [...studentsToGrade] };
+            const errorSectionsState = assignment.sections.map(s => s.id === activeSection.id ? errorSectionState : s);
+            onUpdateAssignment({ ...assignment, sections: errorSectionsState });
           }
-        } catch (error) {
-          console.error('Evaluation error:', error);
-          // Show error but mark as failed
-          studentsToGrade[i].result = {
+
+          processedCount++;
+          setProgress((processedCount / studentsToGrade.length) * 100);
+        }
+      }
+    } finally {
+      // Always disable manual evaluation mode when done
+      setIsManualEvaluation(false);
+      setIsProcessing(false);
+    }
+  };
+
+  // Helper function to wait for a single student's evaluation to complete
+  const waitForStudentEvaluation = async (submissionId, student, assignmentBackendId, totalScore) => {
+    const maxWaitTime = 300000; // 5 minutes max
+    const startTime = Date.now();
+    const pollInterval = 3000; // Poll every 3 seconds
+
+    console.log(`⏳ Waiting for evaluation of submission ${submissionId}...`);
+
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        const token = await window.Clerk?.session?.getToken();
+        const response = await api.get(`/submissions/${assignmentBackendId}`, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+
+        const submission = response.data?.submissions?.find(s => s._id === submissionId);
+        
+        if (!submission) {
+          console.error(`Submission ${submissionId} not found`);
+          throw new Error('Submission not found');
+        }
+
+        const status = submission.evaluationStatus;
+
+        if (status === 'completed') {
+          console.log(`✅ Evaluation completed for ${student.name}! Score: ${submission.overallGrade}/${submission.totalPossible}`);
+          
+          // Update student with results
+          student.result = {
+            score: submission.overallGrade || 0,
+            maxScore: submission.totalPossible || 100,
+            letterGrade: submission.evaluationResult?.letterGrade || '',
+            feedback: submission.evaluationResult?.feedback || '',
+            strengths: submission.evaluationResult?.strengths || [],
+            weaknesses: submission.evaluationResult?.areasForImprovement || [],
+            actionableTips: submission.evaluationResult?.actionableTips || '',
+            lostMarks: submission.evaluationResult?.lostMarks || [],
+            questionScores: submission.evaluationResult?.questionScores || []
+          };
+          student.status = 'completed';
+          
+          return true;
+        } else if (status === 'failed') {
+          console.error(`❌ Evaluation failed for ${student.name}: ${submission.evaluationError}`);
+          
+          student.result = {
             score: 0,
-            maxScore: assignment.config.totalScore || 100,
+            maxScore: totalScore || 100,
             letterGrade: 'F',
-            feedback: `Evaluation failed: ${error.response?.data?.error || error.message}`,
+            feedback: `Evaluation failed: ${submission.evaluationError || 'Unknown error'}`,
             strengths: [],
             weaknesses: ['Evaluation could not be completed'],
             actionableTips: 'Please try again or contact support if the issue persists.'
           };
-          studentsToGrade[i].status = 'completed';
+          student.status = 'error';
+          
+          return false;
+        } else if (status === 'processing') {
+          // Still processing, log progress
+          console.log(`⏳ ${student.name} is still being evaluated...`);
         }
 
-        processedCount++;
-        setProgress((processedCount / studentsToGrade.length) * 100);
-
-        const newSectionState = { ...activeSection, students: [...studentsToGrade] };
-        const newSectionsState = assignment.sections.map(s => s.id === activeSection.id ? newSectionState : s);
-        onUpdateAssignment({ ...assignment, sections: newSectionsState });
+        // Still processing, wait before next poll
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        
+      } catch (error) {
+        console.error('Error polling for evaluation status:', error);
+        // Wait and retry
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
       }
     }
 
-    setIsProcessing(false);
+    // Timeout
+    console.error(`⏰ Timeout waiting for evaluation of ${student.name}`);
+    student.result = {
+      score: 0,
+      maxScore: totalScore || 100,
+      letterGrade: 'F',
+      feedback: 'Evaluation timed out after 5 minutes',
+      strengths: [],
+      weaknesses: ['Evaluation did not complete in time'],
+      actionableTips: 'Please try again'
+    };
+    student.status = 'error';
+    return false;
   };
 
   const exportExcel = async () => {
@@ -685,11 +974,10 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
           <div className="flex items-center gap-3">
 
             {isProcessingComplete && activeSection?.students?.length === 0 ? (
-              <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-sm ${
-                isProcessing || activeSection?.students?.some(s => s.status === 'grading')
-                  ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
-                  : 'bg-black text-white cursor-pointer hover:bg-zinc-800 hover:shadow hover:-translate-y-0.5'
-              }`}>
+              <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-sm ${isProcessing || activeSection?.students?.some(s => s.status === 'grading')
+                ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+                : 'bg-black text-white cursor-pointer hover:bg-zinc-800 hover:shadow hover:-translate-y-0.5'
+                }`}>
                 <Upload className="w-4 h-4" />
                 Upload Submission
                 <input
@@ -704,19 +992,18 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
               </label>
             ) : isProcessingComplete && activeSection?.students?.length > 0 ? (
               <>
-                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  isProcessing || activeSection?.students?.some(s => s.status === 'grading')
-                    ? 'bg-zinc-100 border border-zinc-200 text-zinc-400 cursor-not-allowed'
-                    : 'bg-white border border-zinc-200 text-zinc-700 cursor-pointer hover:bg-black hover:text-white hover:border-black'
-                }`}>
+                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${isProcessing || activeSection?.students?.some(s => s.status === 'grading')
+                  ? 'bg-zinc-100 border border-zinc-200 text-zinc-400 cursor-not-allowed'
+                  : 'bg-white border border-zinc-200 text-zinc-700 cursor-pointer hover:bg-black hover:text-white hover:border-black'
+                  }`}>
                   <Upload className="w-4 h-4" />
                   Upload Submission
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                    multiple 
-                    accept=".txt,.pdf,.md,.ipynb" 
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    multiple
+                    accept=".txt,.pdf,.md,.ipynb"
                     onChange={handleFileUpload}
                     disabled={isProcessing || activeSection?.students?.some(s => s.status === 'grading')}
                   />
@@ -924,6 +1211,34 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                         )}
                       </div>
                     )}
+
+                    {/* Generated Schema Accordion */}
+                    {processingStatus?.gradingSchema && (
+                      <div className="border-2 border-zinc-200 rounded-lg overflow-hidden hover:border-zinc-300 transition-colors">
+                        <button
+                          onClick={() => setActiveDataSection(activeDataSection === 'schema' ? null : 'schema')}
+                          className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${activeDataSection === 'schema' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100'
+                            }`}
+                        >
+                          <h4 className={`text-xs font-bold uppercase tracking-wider ${activeDataSection === 'schema' ? 'text-white' : 'text-zinc-600'}`}>Generated Schema</h4>
+                          <svg
+                            className={`w-4 h-4 text-zinc-400 transition-transform ${activeDataSection === 'schema' ? 'rotate-180 text-white' : ''}`}
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        {activeDataSection === 'schema' && (
+                          <div className="p-4 border-t-2 border-zinc-200">
+                            <pre className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-xs font-mono text-zinc-700 overflow-x-auto max-h-96">
+                              {JSON.stringify(processingStatus.gradingSchema, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -945,18 +1260,17 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                 >
                   <FileText className="w-4 h-4" /> View Processed Data
                 </button>
-                <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${
-                  isProcessing || activeSection?.students?.some(s => s.status === 'grading')
-                    ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
-                    : 'bg-zinc-900 text-white cursor-pointer hover:bg-zinc-800'
-                }`}>
+                <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${isProcessing || activeSection?.students?.some(s => s.status === 'grading')
+                  ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+                  : 'bg-zinc-900 text-white cursor-pointer hover:bg-zinc-800'
+                  }`}>
                   <Upload className="w-4 h-4" /> Upload Submission
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                    multiple 
-                    accept=".txt,.pdf,.md" 
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    multiple
+                    accept=".txt,.pdf,.md"
                     onChange={handleFileUpload}
                     disabled={isProcessing || activeSection?.students?.some(s => s.status === 'grading')}
                   />
@@ -1005,13 +1319,24 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                             {student.result ? student.result.score : '—'}
                           </td>
                           <td className="px-4 md:px-6 py-4 text-center">
-                            <button
-                              onClick={(e) => handleDeleteStudent(student, e)}
-                              className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                              title="Delete submission"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            <div className="flex items-center justify-center gap-1">
+                              {student.status === 'error' && (
+                                <button
+                                  onClick={(e) => handleRetryEvaluation(student, e)}
+                                  className="p-1.5 text-zinc-400 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors"
+                                  title="Retry evaluation"
+                                >
+                                  <RefreshCw className="w-4 h-4" />
+                                </button>
+                              )}
+                              <button
+                                onClick={(e) => handleDeleteStudent(student, e)}
+                                className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                title="Delete submission"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}

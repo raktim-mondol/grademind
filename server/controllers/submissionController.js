@@ -1066,26 +1066,23 @@ exports.uploadSubmission = async (req, res) => {
             fileType: processResult.fileType
           }).save();
 
-          // Manually track usage (Reliable replacement for middleware)
+          // Manually track usage using req.user (already populated by syncUser middleware)
           try {
-            const User = require('../models/user');
-            let user = null;
-
-            // Validate if userId is a standard MongoDB ObjectId
-            if (userId && userId.match(/^[0-9a-fA-F]{24}$/)) {
-              user = await User.findById(userId);
-            }
-
-            // If not found by ID (or not an ObjectId), try lookup by clerkId
-            if (!user) {
-              user = await User.findOne({ clerkId: userId });
-            }
-
-            if (user) {
-              await user.incrementUsage('totalSubmissionsGraded');
-              console.log(`[Controller] Incrementing usage for user ${user._id} (Clerk: ${userId})`);
+            // Use req.user directly - it's already the MongoDB user document from syncUser middleware
+            if (req.user) {
+              await req.user.incrementUsage('totalSubmissionsGraded');
+              console.log(`[Controller] Incremented usage for user ${req.user._id} (Clerk: ${req.user.clerkId})`);
+              console.log(`[Controller] New lifetimeSubmissionsChecked: ${req.user.usage.lifetimeSubmissionsChecked}`);
             } else {
-              console.warn(`[Controller] Could not find user to increment usage for ID: ${userId}`);
+              // Fallback: try to find user by clerkId if req.user is not set
+              const User = require('../models/user');
+              let user = await User.findOne({ clerkId: userId });
+              if (user) {
+                await user.incrementUsage('totalSubmissionsGraded');
+                console.log(`[Controller] Fallback: Incremented usage for user ${user._id}`);
+              } else {
+                console.warn(`[Controller] Could not find user to increment usage for ID: ${userId}`);
+              }
             }
           } catch (trackingError) {
             console.error('Error tracking usage for submission:', trackingError);
@@ -1147,7 +1144,7 @@ exports.uploadSubmission = async (req, res) => {
   }
 };
 
-// Upload batch submissions
+// Upload batch submissions - processes each submission sequentially and waits for evaluation
 exports.uploadBatchSubmissions = async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -1173,6 +1170,9 @@ exports.uploadBatchSubmissions = async (req, res) => {
       return res.status(400).json({ error: 'No files uploaded' });
     }
 
+    console.log(`\n=== BATCH UPLOAD STARTING: ${files.length} files ===`);
+    console.log(`Processing submissions sequentially (one at a time)\n`);
+
     const results = {
       total: files.length,
       successful: 0,
@@ -1182,9 +1182,13 @@ exports.uploadBatchSubmissions = async (req, res) => {
       duplicates: []
     };
 
-    for (const file of files) {
+    // Process files sequentially - wait for each to complete before starting next
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      console.log(`\n--- Processing file ${i + 1} of ${files.length}: ${file.originalname} ---`);
+      
       try {
-        const studentId = path.parse(file.originalname).name; // Re-declare or assume studentId derivation
+        const studentId = path.parse(file.originalname).name;
         const studentName = studentId;
         const originalFileName = file.originalname;
 
@@ -1200,7 +1204,7 @@ exports.uploadBatchSubmissions = async (req, res) => {
             fs.unlinkSync(file.path);
           }
 
-          console.log(`⚠️ Skipping duplicate file in batch: ${originalFileName}`);
+          console.log(`⚠️ Skipping duplicate file: ${originalFileName}`);
           results.skipped++;
           results.duplicates.push({
             fileName: originalFileName,
@@ -1223,6 +1227,7 @@ exports.uploadBatchSubmissions = async (req, res) => {
         });
 
         await submission.save();
+        console.log(`Created submission document: ${submission._id}`);
 
         try {
           const processResult = await processFileForGemini(file.path);
@@ -1234,6 +1239,12 @@ exports.uploadBatchSubmissions = async (req, res) => {
             submission.fileType = processResult.fileType;
             await submission.save();
 
+            console.log(`File processed successfully`);
+            console.log(`  - Original: ${processResult.originalPath}`);
+            console.log(`  - Processed: ${processResult.filePath}`);
+            console.log(`  - Type: ${processResult.fileType}`);
+
+            // Queue the submission for processing
             await submissionProcessingQueue.createJob({
               submissionId: submission._id,
               studentId,
@@ -1242,36 +1253,54 @@ exports.uploadBatchSubmissions = async (req, res) => {
               fileType: processResult.fileType
             }).save();
 
-            console.log(`Batch submission ${submission._id} queued for processing`);
-            if (processResult.fileType === '.ipynb') {
-              console.log(`✅ Batch IPYNB file converted to PDF: ${processResult.filePath}`);
-            }
+            console.log(`Submission queued for processing`);
+
+            // Wait for submission processing to complete
+            await waitForSubmissionProcessing(submission._id);
+            console.log(`✅ Submission processing completed`);
+
+            // Wait for evaluation to complete
+            await waitForEvaluation(submission._id);
+            console.log(`✅ Evaluation completed`);
+
+            // Fetch the updated submission to get evaluation results
+            const updatedSubmission = await Submission.findById(submission._id);
 
             results.successful++;
             results.submissions.push({
               id: submission._id,
               studentId,
-              status: 'queued',
-              isIpynbConversion: processResult.fileType === '.ipynb'
+              studentName,
+              status: 'completed',
+              score: updatedSubmission.overallGrade || 0,
+              totalPossible: updatedSubmission.totalPossible || 0,
+              isIpynbConversion: processResult.fileType === '.ipynb',
+              evaluationResult: updatedSubmission.evaluationResult
             });
 
-            // Manually track usage for batch uploads (middleware doesn't run per-item)
+            // Track usage
             try {
-              const User = require('../models/user');
-              const user = await User.findById(userId);
-              if (user) {
-                // Increment total graded count
-                await user.incrementUsage('totalSubmissionsGraded');
-                // Log activity
-                await user.logActivity('submission_graded', submission._id, 'submission', {
+              if (req.user) {
+                await req.user.incrementUsage('totalSubmissionsGraded');
+                console.log(`[Batch Controller] Incremented usage for user ${req.user._id}`);
+                await req.user.logActivity('submission_graded', submission._id, 'submission', {
                   title: originalFileName
                 });
+              } else {
+                const User = require('../models/user');
+                let user = await User.findOne({ clerkId: userId });
+                if (user) {
+                  await user.incrementUsage('totalSubmissionsGraded');
+                  await user.logActivity('submission_graded', submission._id, 'submission', {
+                    title: originalFileName
+                  });
+                }
               }
             } catch (trackingError) {
-              console.error('Error tracking usage for batch submission:', trackingError);
+              console.error('Error tracking usage:', trackingError);
             }
           } else {
-            console.error(`File processing failed for batch submission ${submission._id}: ${processResult.error}`);
+            console.error(`❌ File processing failed: ${processResult.error}`);
 
             submission.processingStatus = 'failed';
             submission.processingError = `File processing failed: ${processResult.error}`;
@@ -1281,12 +1310,13 @@ exports.uploadBatchSubmissions = async (req, res) => {
             results.submissions.push({
               id: submission._id,
               studentId,
+              studentName,
               status: 'failed',
-              error: 'File processing failed'
+              error: processResult.error
             });
           }
         } catch (extractProcessError) {
-          console.error('Error during batch file processing:', extractProcessError);
+          console.error(`❌ Error during file processing:`, extractProcessError);
 
           submission.processingStatus = 'failed';
           submission.processingError = 'Error in file processing: ' + extractProcessError.message;
@@ -1296,12 +1326,13 @@ exports.uploadBatchSubmissions = async (req, res) => {
           results.submissions.push({
             id: submission._id,
             studentId,
+            studentName,
             status: 'failed',
-            error: 'File processing failed'
+            error: extractProcessError.message
           });
         }
       } catch (submissionError) {
-        console.error('Error processing batch submission file:', submissionError);
+        console.error(`❌ Error processing submission:`, submissionError);
         results.failed++;
         results.submissions.push({
           file: file.originalname,
@@ -1311,8 +1342,11 @@ exports.uploadBatchSubmissions = async (req, res) => {
       }
     }
 
+    console.log(`\n=== BATCH UPLOAD COMPLETED ===`);
+    console.log(`Total: ${results.total}, Successful: ${results.successful}, Failed: ${results.failed}, Skipped: ${results.skipped}\n`);
+
     res.status(201).json({
-      message: 'Batch submissions processed',
+      message: 'Batch submissions processed sequentially with immediate results',
       results
     });
   } catch (error) {
@@ -1320,6 +1354,58 @@ exports.uploadBatchSubmissions = async (req, res) => {
     res.status(500).json({ error: 'An error occurred while processing batch submissions' });
   }
 };
+
+// Helper function to wait for submission processing to complete
+async function waitForSubmissionProcessing(submissionId, maxWaitTime = 300000) { // 5 minutes max
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    const submission = await Submission.findById(submissionId);
+    
+    if (!submission) {
+      throw new Error(`Submission ${submissionId} not found`);
+    }
+    
+    if (submission.processingStatus === 'completed') {
+      return true;
+    }
+    
+    if (submission.processingStatus === 'failed') {
+      throw new Error(`Submission processing failed: ${submission.processingError || 'Unknown error'}`);
+    }
+    
+    // Wait 1 second before checking again
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
+  throw new Error(`Submission processing timeout after ${maxWaitTime}ms`);
+}
+
+// Helper function to wait for evaluation to complete
+async function waitForEvaluation(submissionId, maxWaitTime = 300000) { // 5 minutes max
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    const submission = await Submission.findById(submissionId);
+    
+    if (!submission) {
+      throw new Error(`Submission ${submissionId} not found`);
+    }
+    
+    if (submission.evaluationStatus === 'completed') {
+      return true;
+    }
+    
+    if (submission.evaluationStatus === 'failed') {
+      throw new Error(`Evaluation failed: ${submission.evaluationError || 'Unknown error'}`);
+    }
+    
+    // Wait 1 second before checking again
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
+  throw new Error(`Evaluation timeout after ${maxWaitTime}ms`);
+}
 
 // Get submissions for a specific assignment
 exports.getSubmissions = async (req, res) => {
@@ -1466,17 +1552,31 @@ exports.exportToExcel = async (req, res) => {
       sheetSubmissions.forEach(sub => {
         const qScores = sub.evaluationResult?.questionScores || [];
         qScores.forEach(q => {
+          const qNum = q.questionNumber || 'Unknown';
+
           // Handle subsections if flattened or nested
-          // Assuming flattened structure "1.1", "1.2" for simplicity or parsing logic
-          // If structure has subsections:
           if (q.subsections && q.subsections.length > 0) {
             q.subsections.forEach(subSec => {
-              const key = subSec.subsectionNumber || q.questionNumber;
-              questionKeys.add(key);
-              if (subSec.maxScore) questionMaxScores.set(key, subSec.maxScore);
+              const subsecNum = subSec.subsectionNumber || '';
+
+              // Format the key to match the format used in defineQuestionColumns
+              let formattedKey;
+              if (/^\d+$/.test(subsecNum)) {
+                // Numeric subsection: use dot notation (1.1, 1.2, etc.)
+                formattedKey = `${qNum}.${subsecNum}`;
+              } else if (subsecNum) {
+                // Letter or roman numeral: use parentheses (1(a), 1(b), etc.)
+                formattedKey = `${qNum}(${subsecNum})`;
+              } else {
+                // No subsection number, just use question number
+                formattedKey = qNum;
+              }
+
+              questionKeys.add(formattedKey);
+              if (subSec.maxScore) questionMaxScores.set(formattedKey, subSec.maxScore);
             });
           } else {
-            const key = q.questionNumber;
+            const key = qNum;
             questionKeys.add(key);
             if (q.maxScore) questionMaxScores.set(key, q.maxScore);
           }
@@ -1504,7 +1604,9 @@ exports.exportToExcel = async (req, res) => {
       ];
 
       sortedKeys.forEach(key => {
-        columns.push({ header: `Task ${key}`, key: `q_${key}`, width: 10 });
+        const maxScore = questionMaxScores.get(key) || 0;
+        const headerText = maxScore > 0 ? `Task ${key} (${maxScore})` : `Task ${key}`;
+        columns.push({ header: headerText, key: `q_${key}`, width: 10 });
       });
 
       worksheet.columns = columns;
@@ -1540,10 +1642,29 @@ exports.exportToExcel = async (req, res) => {
         const scoreMap = new Map();
 
         qScores.forEach(q => {
+          const qNum = q.questionNumber || 'Unknown';
+
           if (q.subsections && q.subsections.length > 0) {
-            q.subsections.forEach(s => scoreMap.set(s.subsectionNumber || q.questionNumber, s.earnedScore));
+            q.subsections.forEach(s => {
+              const subsecNum = s.subsectionNumber || '';
+
+              // Format the key the same way as in the key collection phase
+              let formattedKey;
+              if (/^\d+$/.test(subsecNum)) {
+                // Numeric subsection: use dot notation (1.1, 1.2, etc.)
+                formattedKey = `${qNum}.${subsecNum}`;
+              } else if (subsecNum) {
+                // Letter or roman numeral: use parentheses (1(a), 1(b), etc.)
+                formattedKey = `${qNum}(${subsecNum})`;
+              } else {
+                // No subsection number, just use question number
+                formattedKey = qNum;
+              }
+
+              scoreMap.set(formattedKey, s.earnedScore);
+            });
           } else {
-            scoreMap.set(q.questionNumber, q.earnedScore);
+            scoreMap.set(qNum, q.earnedScore);
           }
         });
 

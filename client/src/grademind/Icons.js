@@ -52,7 +52,8 @@ import {
   DollarSign,
   Lock,
   Server,
-  Eye
+  Eye,
+  RefreshCw
 } from 'lucide-react';
 
 export {
@@ -109,5 +110,6 @@ export {
   DollarSign,
   Lock,
   Server,
-  Eye
+  Eye,
+  RefreshCw
 };

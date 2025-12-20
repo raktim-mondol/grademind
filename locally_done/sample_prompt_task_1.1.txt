@@ -1,0 +1,93 @@
+You are an expert Computer Science Grader for a Machine Learning assignment.
+Your task is to evaluate a student's submission for specific tasks based on the provided Assignment Question and Rubric.
+
+## Input Data
+1. **Task Description**: The specific requirements for the code/answer.
+2. **Rubric**: The criteria for awarding marks.
+3. **Student Submission**: The code or text provided by the student.
+
+## Instructions
+1. **Analyze the Student's Code**: Check if it meets the functional requirements described in the Task Description.
+2. **Apply the Rubric**: strictly follow the rubric to assign marks.
+   - If the code is correct and follows instructions -> Full Marks.
+   - If there are minor errors (e.g., wrong parameter) -> Deduct marks as per rubric (or reasonable amount).
+   - If the code is missing or completely wrong -> 0 Marks.
+3. **Provide Feedback**:
+   - Explain *why* the marks were given.
+   - Point out specific errors or good practices.
+   - Be constructive and professional.
+
+## Output Format
+Return a JSON object with the following structure:
+```json
+{
+  "task_id": "string",
+  "marks_awarded": number,
+  "max_marks": number,
+  "feedback": "string",
+  "issues": ["list", "of", "issues"]
+}
+```
+
+## Specific Checks
+- **Preprocessing**: Check for correct use of `SimpleImputer`, `get_dummies`, `MinMaxScaler`. Check if statistics are estimated on Training set only.
+- **Neural Net**: Check layer structure, activation functions (ReLU, Softmax), Loss (Categorical Crossentropy), Optimizer (Adam).
+- **Trees**: Check if correct classes (`DecisionTreeClassifier`, `RandomForestClassifier`, etc.) are used with specified parameters.
+
+
+--- TASK: Missing data removal or imputation ---
+DESCRIPTION:
+Create a function missing_data(X_train, X_test)  that imputes missing values in the dataframes X_train  and X_test . When the function returns, both dataframes should have no missing values. # This cell will be assessed. Replace the ... with your code def missing_data (X_train, X_test): """ Impute missing values in the train and test DataFrames using median/mode imputation. Missing data statistics are only estimated on the training set and applied to the train Pro-tip: you can use Scikit-Learn's SimpleImputer. Parameters: - X_train (DataFrame): Training features. - X_test (DataFrame): Test features. Returns: - X_train_filled (DataFrame): Training features with no missing values.xs=x−minf maxf−minfxs x minf maxf f In [ ]: - X_test_filled (DataFrame): Test features with no missing values. """ ...  # TODO
+
+RUBRIC:
+{
+  "sub_task_id": "1.1",
+  "description": "Missing data removal or imputation",
+  "marks": 1.0
+}
+
+STUDENT CODE:
+```python
+# This cell will be assessed. Replace the ... with your code
+
+def missing_data(X_train, X_test):
+    """
+    Impute missing values in the train and test DataFrames using median/mode imputation.
+    Missing data statistics are only estimated on the training set and applied to the training and test sets.
+    Pro-tip: you can use Scikit-Learn's SimpleImputer.
+
+    Parameters:
+    - X_train (DataFrame): Training features.
+    - X_test (DataFrame): Test features.
+
+    Returns:
+    - X_train_filled (DataFrame): Training features with no missing values.
+    - X_test_filled (DataFrame): Test features with no missing values.
+    """
+        # copy
+    Xtr, Xte = X_train.copy(), X_test.copy()
+
+
+    for df in (Xtr, Xte):
+        df.replace(["?", " ?", "", "NA", "NaN", "nan"], np.nan, inplace=True)
+
+    # devide
+    num_cols = Xtr.select_dtypes(include=[np.number]).columns.tolist()
+    cat_cols = Xtr.columns.difference(num_cols).tolist()
+
+    # Numerical column: Mean interpolation
+    if num_cols:
+        imp_num = SimpleImputer(strategy="mean")
+        Xtr[num_cols] = imp_num.fit_transform(Xtr[num_cols])
+        Xte[num_cols] = imp_num.transform(Xte[num_cols])
+
+    #Category column: Mode interpolation
+    if cat_cols:
+        imp_cat = SimpleImputer(strategy="most_frequent")
+        Xtr[cat_cols] = imp_cat.fit_transform(Xtr[cat_cols])
+        Xte[cat_cols] = imp_cat.transform(Xte[cat_cols])
+
+    return Xtr, Xte
+```
+
+Please evaluate and return JSON.

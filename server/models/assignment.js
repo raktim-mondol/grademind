@@ -91,6 +91,18 @@ const assignmentSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.Mixed,
     default: {}
   },
+  // Extracted grading schema for consistent evaluation
+  gradingSchema: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  gradingSchemaStatus: {
+    type: String,
+    enum: ['pending', 'processing', 'completed', 'failed', 'not_applicable'],
+    default: 'pending'
+  },
+  gradingSchemaError: String,
+  gradingSchemaExtractedAt: Date,
   solutionData: {
     type: mongoose.Schema.Types.Mixed,
     default: {}

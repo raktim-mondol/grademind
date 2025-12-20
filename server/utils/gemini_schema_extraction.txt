@@ -1,0 +1,140 @@
+/**
+ * Analyze rubric file with Gemini to extract grading schema
+ * This is called ONCE during assignment creation to extract task/subtask structure
+ * @param {string} rubricFilePath - Path to rubric PDF file
+ * @returns {Object} Extracted schema with task structure and format
+ */
+async function analyzeRubricForSchema(rubricFilePath) {
+  console.log(`\n=== ANALYZING RUBRIC FOR SCHEMA EXTRACTION ===`);
+  console.log(`Rubric file: ${rubricFilePath}`);
+  
+  try {
+    const { processFileForGemini } = require('./pdfExtractor');
+    
+    // Upload rubric file for Gemini processing
+    const fileProcessResult = await processFileForGemini(rubricFilePath);
+    
+    if (!fileProcessResult.success) {
+      throw new Error(`Failed to process rubric file: ${fileProcessResult.error}`);
+    }
+    
+    console.log(`✓ Rubric file uploaded successfully`);
+    
+    // Create extraction prompt
+    const extractionPrompt = `Analyze this grading rubric and extract the task/subtask structure.
+
+CRITICAL REQUIREMENTS:
+1. Extract the EXACT numbering format used in the rubric (e.g., "1.1", "1.2" or "1a", "1b" or "1(a)", "1(b)")
+2. Identify ALL tasks and sub-tasks with their IDs and marks
+3. Detect the numbering pattern/format used
+
+Return a JSON object with this EXACT structure:
+{
+  "title": "Rubric title",
+  "total_marks": <total points>,
+  "format_type": "<dot_notation|letter|parenthetical|mixed>",
+  "tasks": [
+    {
+      "task_id": "1",
+      "title": "Task title",
+      "max_marks": <sum of subtask marks>,
+      "sub_tasks": [
+        {
+          "sub_task_id": "1.1",  // EXACT ID from rubric
+          "description": "Brief description",
+          "marks": 1.0
+        }
+      ]
+    }
+  ]
+}
+
+EXAMPLES of format_type:
+- dot_notation: "1.1", "1.2", "3.2.1"
+- letter: "1a", "1b", "2a"  
+- parenthetical: "1(a)", "1(b)", "2(a)"
+- mixed: combination of formats
+
+**USE THE EXACT IDs AS THEY APPEAR IN THE RUBRIC - DO NOT MODIFY THEM**`;
+
+    // Build Gemini request
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          {
+            fileData: {
+              mimeType: fileProcessResult.mimeType,
+              fileUri: fileProcessResult.uri
+            }
+          },
+          { text: extractionPrompt }
+        ]
+      }
+    ];
+
+    // Create model for schema extraction
+    const schemaExtractionModel = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
+      generationConfig: {
+        temperature: 0.0,
+        responseMimeType: "application/json"
+      },
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+      ]
+    });
+
+    console.log(`Sending schema extraction request to Gemini...`);
+    
+    const result = await withRetry(async () => {
+      const start = Date.now();
+      const response = await schemaExtractionModel.generateContent({ contents });
+      console.log(`Schema extraction completed in ${Date.now() - start}ms`);
+      return response;
+    });
+
+    const responseText = result.response.text();
+    console.log(`\n=== SCHEMA EXTRACTION RESPONSE ===`);
+    console.log(responseText);
+    console.log(`=== END SCHEMA EXTRACTION ===\n`);
+
+    // Parse JSON response
+    const extractedSchema = JSON.parse(responseText);
+    
+    // Validate extracted schema
+    if (!extractedSchema.tasks || !Array.isArray(extractedSchema.tasks)) {
+      throw new Error('Invalid schema: missing tasks array');
+    }
+    
+    // Count total subtasks
+    let totalSubtasks = 0;
+    extractedSchema.tasks.forEach(task => {
+      if (task.sub_tasks && Array.isArray(task.sub_tasks)) {
+        totalSubtasks += task.sub_tasks.length;
+      }
+    });
+    
+    console.log(`✓ Schema extracted successfully:`);
+    console.log(`  - Format: ${extractedSchema.format_type || 'unknown'}`);
+    console.log(`  - Tasks: ${extractedSchema.tasks.length}`);
+    console.log(`  - Subtasks: ${totalSubtasks}`);
+    console.log(`  - Total marks: ${extractedSchema.total_marks || 'unknown'}`);
+    
+    return {
+      success: true,
+      schema: extractedSchema
+    };
+    
+  } catch (error) {
+    console.error('Error analyzing rubric for schema:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+

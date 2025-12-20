@@ -550,6 +550,8 @@ exports.getProcessingStatus = async (req, res) => {
       processedData: assignment.processedData || null,
       processedRubric: assignment.processedRubric || null,
       processedSolution: assignment.processedSolution || null,
+      gradingSchema: assignment.gradingSchema || null,
+      gradingSchemaStatus: assignment.gradingSchemaStatus || 'pending',
       orchestrationData: assignment.orchestratedData ? {
         completenessScore: assignment.orchestratedData.validation?.completenessScore || 0,
         isValid: assignment.orchestratedData.validation?.isValid || false,
