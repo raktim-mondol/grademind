@@ -103,6 +103,12 @@ const assignmentSchema = new mongoose.Schema({
   },
   gradingSchemaError: String,
   gradingSchemaExtractedAt: Date,
+  // Pre-built response schema for Gemini API (optimization: avoids rebuilding during evaluation)
+  responseSchema: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  responseSchemaBuiltAt: Date,
   solutionData: {
     type: mongoose.Schema.Types.Mixed,
     default: {}

@@ -216,6 +216,209 @@ async function getGeminiResponse(prompt, jsonResponse = false) {
 }
 
 /**
+ * Analyze rubric JSON to extract grading schema
+ * Uses Gemini API to convert processed rubric JSON into hierarchical task/subtask structure
+ * @param {Object} processedRubric - Processed rubric with grading_criteria array
+ * @returns {Object} Extracted schema with task structure and format
+ */
+async function analyzeRubricJSONForSchema(processedRubric) {
+  console.log(`\n=== ANALYZING PROCESSED RUBRIC JSON FOR SCHEMA EXTRACTION ===`);
+
+  try {
+    if (!processedRubric || !processedRubric.grading_criteria || !Array.isArray(processedRubric.grading_criteria)) {
+      throw new Error('Invalid processedRubric: missing grading_criteria array');
+    }
+
+    const gradingCriteria = processedRubric.grading_criteria;
+    const totalMarks = processedRubric.total_points || 100;
+    const rubricTitle = processedRubric.title || "Extracted Rubric";
+
+    console.log(`✓ Processed rubric loaded with ${gradingCriteria.length} criteria, ${totalMarks} total marks`);
+
+    // Prepare rubric data for Gemini
+    const rubricData = {
+      title: rubricTitle,
+      total_points: totalMarks,
+      grading_criteria: gradingCriteria
+    };
+
+    const extractionPrompt = `You are an expert educational content analyzer. Your task is to convert a flat list of grading criteria into a hierarchical task/subtask structure suitable for automated grading.
+
+=== INPUT RUBRIC DATA ===
+${JSON.stringify(rubricData, null, 2)}
+
+=== INSTRUCTIONS ===
+
+1. ANALYZE the grading_criteria array and identify the hierarchical structure
+2. GROUP criteria by their main task/question number
+3. BUILD a nested tree structure with tasks and sub_tasks
+4. CALCULATE max_marks for parent nodes (sum of children)
+5. PRESERVE all descriptions and metadata
+
+=== OUTPUT REQUIREMENTS ===
+
+Return a JSON object with this EXACT structure:
+
+{
+  "title": "Rubric title from input",
+  "total_marks": <total points>,
+  "format_type": "dot_notation",
+  "tasks": [
+    {
+      "task_id": "1",
+      "title": "Task 1",
+      "max_marks": <sum of all marks in this task>,
+      "sub_tasks": [
+        {
+          "sub_task_id": "1.1",
+          "description": "Description from criterionName or description",
+          "marks": 2.0  // Leaf nodes have marks
+        },
+        {
+          "sub_task_id": "1.2",
+          "description": "Description",
+          "marks": 4.0
+        },
+        {
+          "sub_task_id": "1.3",
+          "description": "Parent task description",
+          "max_marks": 3.0,  // Parent nodes have max_marks (sum of children)
+          "sub_tasks": [
+            {
+              "sub_task_id": "1.3.1",
+              "description": "Sub-subtask",
+              "marks": 2.0
+            },
+            {
+              "sub_task_id": "1.3.2",
+              "description": "Sub-subtask",
+              "marks": 1.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+=== CRITICAL RULES ===
+
+1. **Hierarchy Preservation**: 
+   - "1.1", "1.2", "1.3.1", "1.3.2" → nested structure
+   - "1.3" becomes parent with sub_tasks
+
+2. **Marks Assignment**:
+   - Leaf nodes (no children): use "marks" from criterion.weight
+   - Parent nodes (with children): use "max_marks" = sum of children
+
+3. **ID Format**:
+   - Use dot notation: "1", "1.1", "1.3.1"
+   - Remove any "(fullmarks)" suffixes from question_number
+
+4. **Description Source**:
+   - Use criterionName if available
+   - Fall back to description field
+
+5. **Task Grouping**:
+   - All criteria starting with "1." go under task_id "1"
+   - All criteria starting with "2." go under task_id "2"
+   - And so on
+
+=== EXAMPLE ===
+
+Input grading_criteria:
+[
+  {"question_number": "1.1 (fullmarks)", "criterionName": "Analysis", "weight": 2.0},
+  {"question_number": "1.2 (fullmarks)", "criterionName": "Implementation", "weight": 4.0},
+  {"question_number": "1.3.1 (fullmarks)", "criterionName": "Code Quality", "weight": 2.0},
+  {"question_number": "1.3.2 (fullmarks)", "criterionName": "Documentation", "weight": 1.0}
+]
+
+Expected output:
+{
+  "title": "Extracted Rubric",
+  "total_marks": 100,
+  "format_type": "dot_notation",
+  "tasks": [
+    {
+      "task_id": "1",
+      "title": "Task 1",
+      "max_marks": 9,
+      "sub_tasks": [
+        {"sub_task_id": "1.1", "description": "Analysis", "marks": 2.0},
+        {"sub_task_id": "1.2", "description": "Implementation", "marks": 4.0},
+        {
+          "sub_task_id": "1.3",
+          "description": "",
+          "max_marks": 3.0,
+          "sub_tasks": [
+            {"sub_task_id": "1.3.1", "description": "Code Quality", "marks": 2.0},
+            {"sub_task_id": "1.3.2", "description": "Documentation", "marks": 1.0}
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+=== FINAL CHECKLIST ===
+✓ All criteria are included in the hierarchy
+✓ Parent nodes have max_marks (sum of children)
+✓ Leaf nodes have marks (direct values)
+✓ IDs use dot notation
+✓ Descriptions are preserved
+✓ Total marks match the input
+
+Return ONLY the JSON object, no additional text.`;
+
+    // Call Gemini API
+    const model = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
+      generationConfig: {
+        temperature: 0.2,  // Lower temperature for consistency
+        responseMimeType: "application/json"
+      },
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+      ]
+    });
+
+    console.log(`🤖 Calling Gemini API for schema extraction...`);
+
+    const result = await withRetry(async () => {
+      const start = Date.now();
+      const response = await model.generateContent({
+        contents: [{ parts: [{ text: extractionPrompt }] }]
+      });
+      console.log(`✓ Gemini API call completed in ${Date.now() - start}ms`);
+      return response;
+    });
+
+    const responseText = result.response.text();
+    console.log(`\n=== GEMINI SCHEMA RESPONSE ===`);
+    console.log(responseText);
+    console.log(`=== END RESPONSE ===\n`);
+
+    const schema = JSON.parse(cleanJsonResponse(responseText));
+
+    // Validate response
+    if (!schema.tasks || !Array.isArray(schema.tasks)) {
+      throw new Error('Invalid schema: missing tasks array');
+    }
+
+    console.log(`✓ Schema extracted: ${schema.tasks.length} tasks, ${schema.total_marks} marks`);
+    return { success: true, schema: schema };
+
+  } catch (error) {
+    console.error('❌ Error analyzing rubric JSON for schema:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Analyze rubric file with Gemini to extract grading schema
  * Called ONCE during assignment creation to extract task/subtask structure
  * @param {string} rubricFilePath - Path to rubric PDF file
@@ -425,7 +628,7 @@ async function analyzeRubricForSchema(rubricFilePath) {
     console.log(responseText);
     console.log(`=== END SCHEMA EXTRACTION ===\n`);
 
-    const extractedSchema = JSON.parse(responseText);
+    let extractedSchema = JSON.parse(responseText);
 
     if (!extractedSchema.tasks || !Array.isArray(extractedSchema.tasks)) {
       throw new Error('Invalid schema: missing tasks array');
@@ -433,11 +636,11 @@ async function analyzeRubricForSchema(rubricFilePath) {
 
     // Normalize task IDs to ensure consistent format
     console.log(`🔧 Normalizing task IDs to dot notation format...`);
-    
+
     // Recursive function to normalize IDs at any nesting level
     function normalizeTaskIds(task, taskIdx, level = 0) {
       const indent = '  '.repeat(level);
-      
+
       // Normalize main task ID
       const originalTaskId = task.task_id;
       task.task_id = String(task.task_id)
@@ -507,43 +710,43 @@ async function analyzeRubricForSchema(rubricFilePath) {
 
     // CRITICAL: Remove any duplicate subtasks that may have been created
     console.log(`🔧 Removing duplicate subtasks and validating marks...`);
-    
+
     function removeDuplicateSubtasks(task, level = 0) {
       const indent = '  '.repeat(level);
-      
+
       if (task.sub_tasks && Array.isArray(task.sub_tasks)) {
         const seenIds = new Set();
         const uniqueSubtasks = [];
-        
+
         task.sub_tasks.forEach((subtask, idx) => {
           const subtaskId = subtask.sub_task_id;
-          
+
           if (seenIds.has(subtaskId)) {
-            console.log(`${indent}⚠️  REMOVING DUPLICATE: ${subtaskId} (appears multiple times)`);
+            console.log(`${indent}[DUPLICATE] REMOVING: ${subtaskId} (appears multiple times)`);
           } else {
             seenIds.add(subtaskId);
-            
+
             // Validate marks are numeric
             if (subtask.marks !== undefined && typeof subtask.marks !== 'number') {
-              console.log(`${indent}⚠️  Fixing marks for ${subtaskId}: "${subtask.marks}" → ${parseFloat(subtask.marks)}`);
+              console.log(`${indent}[FIX] Converting marks for ${subtaskId}: "${subtask.marks}" → ${parseFloat(subtask.marks)}`);
               subtask.marks = parseFloat(subtask.marks);
             }
-            
+
             // Validate max_marks are numeric
             if (subtask.max_marks !== undefined && typeof subtask.max_marks !== 'number') {
-              console.log(`${indent}⚠️  Fixing max_marks for ${subtaskId}: "${subtask.max_marks}" → ${parseFloat(subtask.max_marks)}`);
+              console.log(`${indent}[FIX] Converting max_marks for ${subtaskId}: "${subtask.max_marks}" → ${parseFloat(subtask.max_marks)}`);
               subtask.max_marks = parseFloat(subtask.max_marks);
             }
-            
+
             uniqueSubtasks.push(subtask);
-            
+
             // Recursively process nested subtasks
             if (subtask.sub_tasks && Array.isArray(subtask.sub_tasks)) {
               removeDuplicateSubtasks(subtask, level + 1);
             }
           }
         });
-        
+
         task.sub_tasks = uniqueSubtasks;
       }
     }
@@ -587,11 +790,12 @@ function buildEvaluationResponseSchema(assignmentData, rubricData) {
     console.log('⚠ No stored gradingSchema - building from rubricData');
   }
 
-  // Extract subtask IDs and compute RELATIVE subsection numbers
-  // Maps: "1.1" -> relative "1", "3.2.1" -> relative "2.1"
+  // Extract ALL subtask IDs with their marks for schema enforcement
+  // We use the RELATIVE part only (e.g., "1" for "1.1", "2.1" for "3.2.1")
+  // because the questionNumber already provides the task context
   const tasks = schemaSource?.tasks || [];
-  const allSubtaskIds = [];
-  const taskSubtaskMap = {}; // Map of task_id -> [{full, relative}]
+  const allSubtaskIds = [];       // Full IDs for reference
+  const taskSubtaskMap = {};      // Map of task_id -> [{fullId, relativeId, marks}]
 
   if (tasks.length > 0) {
     tasks.forEach(task => {
@@ -606,30 +810,32 @@ function buildEvaluationResponseSchema(assignmentData, rubricData) {
           // Extract RELATIVE ID by removing task prefix and separator
           // "1.1" with taskId "1" -> "1", "3.2.1" with taskId "3" -> "2.1"
           let relativeId = fullId;
-          if (fullId.startsWith(taskId)) {
+          if (fullId.startsWith(taskId + '.')) {
+            relativeId = fullId.substring(taskId.length + 1);
+          } else if (fullId.startsWith(taskId)) {
             relativeId = fullId.substring(taskId.length).replace(/^[.\-_]/, '');
           }
 
-          taskSubtaskMap[taskId].push({ full: fullId, relative: relativeId, marks: st.marks });
+          taskSubtaskMap[taskId].push({ fullId, relativeId, marks: st.marks });
         });
       }
     });
   }
 
-  // Build per-task breakdown with full->relative ID mapping
-  let taskBreakdown = '';
-  let relativeIdList = [];
+  // Build explicit subtask list showing expected format per task
+  // Format: "Task 1: use '1','2','3' | Task 3: use '2.1','2.2','2.3'"
+  let taskSubtaskList = '';
   Object.entries(taskSubtaskMap).forEach(([taskId, items]) => {
     if (items.length > 0) {
-      const mappings = items.map(i => `${i.full}→'${i.relative}'`).join(', ');
-      taskBreakdown += ` Task${taskId}: ${mappings}.`;
-      relativeIdList.push(...items.map(i => i.relative));
+      const ids = items.map(i => `'${i.relativeId}'`).join(', ');
+      taskSubtaskList += `Task ${taskId}: use ${ids}. `;
     }
   });
 
+  // Build the expected format description with explicit examples
   const expectedFormat = allSubtaskIds.length > 0
-    ? `Use RELATIVE subsection numbers. Mapping:${taskBreakdown}`
-    : 'Use the subsection part of the ID only (e.g., for 1.1 use 1, for 3.2.1 use 2.1).';
+    ? `CRITICAL FORMAT: subsectionNumber must be the RELATIVE part only (NOT the full ID). ${taskSubtaskList}Example: For subtask '1.1' under questionNumber '1', use subsectionNumber='1'. For subtask '3.2.1' under questionNumber '3', use subsectionNumber='2.1'.`
+    : 'Use numeric dot notation only (e.g., "1", "2", "1.1", "2.1"). NO "Task" prefix, NO parentheses.';
 
   const schema = {
     type: "OBJECT",
@@ -670,13 +876,13 @@ function buildEvaluationResponseSchema(assignmentData, rubricData) {
             },
             subsections: {
               type: "ARRAY",
-              description: `MANDATORY array. Create ONE entry for EACH subtask.${taskBreakdown}`,
+              description: `MANDATORY array. Create ONE entry for EACH subtask. ${taskSubtaskList}`,
               items: {
                 type: "OBJECT",
                 properties: {
                   subsectionNumber: {
                     type: "STRING",
-                    description: `Subtask ID - use the EXACT ID from rubric. ${expectedFormat}. Do NOT modify or abbreviate the IDs.`
+                    description: `RELATIVE subtask ID only (NOT the full ID). ${expectedFormat}`
                   },
                   subsectionText: {
                     type: "STRING",
@@ -993,9 +1199,15 @@ EVALUATION INSTRUCTIONS:
 16. Provide concrete suggestions for the student.
 ${rubricCriteria.length > 0 ? '\n**REMINDER: When a rubric is provided, it is the PRIMARY grading standard. All scores and feedback must align with the rubric criteria.**' : ''}
 
+⚠️ **CRITICAL SCORING REQUIREMENT - READ CAREFULLY:**
+The overallGrade MUST EXACTLY EQUAL the sum of all earned scores from questionScores:
+- For questions with subsections: overallGrade = Σ(subsection.earnedScore for all subsections)
+- For questions without subsections: overallGrade = Σ(question.earnedScore for all questions)
+- This is MANDATORY and will be validated. Any mismatch will cause grading errors.
+
 OUTPUT REQUIREMENTS:
 Provide your response ONLY as a valid JSON object matching the requested structure. The JSON object must include:
-- "overallGrade": <number> (Sum of scores, cannot exceed totalPossibleScore)
+- "overallGrade": <number> (MUST equal sum of all earned scores from questionScores - this is CRITICAL)
 - "totalPossible": <number> (The total possible score: ${totalPossibleScore})
 - "criteriaGrades": Array of objects with MANDATORY subsection breakdown for EVERY question. Each object must have:
   * "questionNumber": <string> (e.g., "1", "2", "1a", "1b")
@@ -1046,13 +1258,13 @@ Provide your response ONLY as a valid JSON object matching the requested structu
   * "questionText": <string> (Brief summary of the question)
   * "maxScore": <number> (Maximum possible points for this question/subsection)
   * "earnedScore": <number> (Points earned by the student)
-  * "feedback": <string> (Specific feedback for this question/subsection)
+  * "feedback": <string> (Brief, focused feedback in 1-2 sentences explaining the key issue or achievement. Keep it concise and clear - maximum 250 characters.)
   * "subsections": Array of objects (if question has subsections like a, b, c or i, ii, iii, otherwise empty array). Each subsection object includes:
     - "subsectionNumber": <string> (e.g., "a", "b", "i", "ii", "1", "2")
     - "subsectionText": <string> (Brief summary)
     - "maxScore": <number>
     - "earnedScore": <number>
-    - "feedback": <string>
+    - "feedback": <string> (Brief, focused feedback in 1-2 sentences explaining the key issue or achievement. Keep it concise and clear - maximum 250 characters.)
 - "strengths": Array of strings (minimum 3 strengths).
 - "areasForImprovement": Array of strings (minimum 2 areas). **Each entry MUST follow this format: "Question X (-Y points): Reason for mark deduction"** (e.g., "Question 1a (-2 points): Incomplete implementation of the sorting algorithm, missing the merge step").
 - "suggestions": Array of strings (minimum 2 concrete suggestions).
@@ -1136,8 +1348,15 @@ Provide your response ONLY as a valid JSON object matching the requested structu
     console.log(textPromptPart);
     console.log('=== GEMINI INPUT DEBUG INFO END ===\n');
 
-    // Build strict response schema for deterministic grading
-    const responseSchema = buildEvaluationResponseSchema(assignmentData, rubricData);
+    // Use pre-built response schema from assignment (optimization)
+    // If not available, build it on-the-fly (fallback for old assignments)
+    let responseSchema = assignmentData?.responseSchema;
+    if (!responseSchema) {
+      console.log('⚠️ No stored responseSchema found - building from gradingSchema');
+      responseSchema = buildEvaluationResponseSchema(assignmentData, rubricData);
+    } else {
+      console.log('✓ Using pre-built responseSchema from assignment');
+    }
 
     console.log(`Sending multi-modal evaluation request to Gemini API for ${originalFileType} file (as ${mimeType}): ${submissionFilePath}`);
 
@@ -1233,6 +1452,11 @@ Provide your response ONLY as a valid JSON object matching the requested structu
       console.log('=== QUESTION SCORES VALIDATION END ===\n');
       // *** END VALIDATION ***
 
+      // *** CRITICAL FIX: Recalculate overallGrade to match sum of subtask scores ***
+      console.log('=== OVERALLGRADE RECALCULATION START ===');
+      parsedResult = recalculateOverallGrade(parsedResult);
+      console.log('=== OVERALLGRADE RECALCULATION END ===\n');
+
       // Clean up temporary PDF files if they were created from .ipynb
       if (originalFileType === '.ipynb' && submissionFilePath !== originalSubmissionPath) {
         try {
@@ -1245,7 +1469,9 @@ Provide your response ONLY as a valid JSON object matching the requested structu
         }
       }
 
-      return parsedResult;
+      // Add lostMarks to the evaluation result
+      // Note: Schema enforcement ensures consistent subtask IDs, so normalization is not needed
+      return addLostMarksToEvaluation(parsedResult);
 
     } catch (apiError) {
       console.error("Gemini API error (multi-modal):", apiError);
@@ -1366,9 +1592,15 @@ EVALUATION INSTRUCTIONS:
 15. Provide concrete suggestions for the student.
 ${rubricCriteria.length > 0 ? '\n**REMINDER: When a rubric is provided, it is the PRIMARY grading standard. All scores and feedback must align with the rubric criteria.**' : ''}
 
+⚠️ **CRITICAL SCORING REQUIREMENT - READ CAREFULLY:**
+The overallGrade MUST EXACTLY EQUAL the sum of all earned scores from questionScores:
+- For questions with subsections: overallGrade = Σ(subsection.earnedScore for all subsections)
+- For questions without subsections: overallGrade = Σ(question.earnedScore for all questions)
+- This is MANDATORY and will be validated. Any mismatch will cause grading errors.
+
 OUTPUT REQUIREMENTS:
 Provide your response ONLY as a valid JSON object matching the requested structure. The JSON object must include:
-- "overallGrade": <number> (Sum of scores, cannot exceed totalPossibleScore)
+- "overallGrade": <number> (MUST equal sum of all earned scores from questionScores - this is CRITICAL)
 - "totalPossible": <number> (The total possible score: ${totalPossibleScore})
 - "criteriaGrades": Array of objects with MANDATORY subsection breakdown for EVERY question. Each object must have:
   * "questionNumber": <string> (e.g., "1", "2", "1a", "1b")
@@ -1417,13 +1649,13 @@ Provide your response ONLY as a valid JSON object matching the requested structu
   * "questionText": <string> (Brief summary of the question)
   * "maxScore": <number> (Maximum possible points for this question/subsection)
   * "earnedScore": <number> (Points earned by the student)
-  * "feedback": <string> (Specific feedback for this question/subsection)
+  * "feedback": <string> (Brief, focused feedback in 1-2 sentences explaining the key issue or achievement. Keep it concise and clear - maximum 250 characters.)
   * "subsections": Array of objects (if question has subsections like a, b, c or i, ii, iii, otherwise empty array). Each subsection object includes:
     - "subsectionNumber": <string> (e.g., "a", "b", "i", "ii", "1", "2")
     - "subsectionText": <string> (Brief summary)
     - "maxScore": <number>
     - "earnedScore": <number>
-    - "feedback": <string>
+    - "feedback": <string> (Brief, focused feedback in 1-2 sentences explaining the key issue or achievement. Keep it concise and clear - maximum 250 characters.)
 - "strengths": Array of strings (minimum 3 strengths).
 - "areasForImprovement": Array of strings (minimum 2 areas). **Each entry MUST follow this format: "Question X (-Y points): Reason for mark deduction"** (e.g., "Question 1a (-2 points): Incomplete implementation of the sorting algorithm, missing the merge step").
 - "suggestions": Array of strings (minimum 2 concrete suggestions).
@@ -1515,12 +1747,19 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
     console.log('=== CRITERIA GRADES VALIDATION (Text-based) END ===\n');
     // *** END VALIDATION ***
 
-    return parsedResult;
+    // *** CRITICAL FIX: Recalculate overallGrade to match sum of subtask scores ***
+    console.log('=== OVERALLGRADE RECALCULATION START (Text-based) ===');
+    parsedResult = recalculateOverallGrade(parsedResult);
+    console.log('=== OVERALLGRADE RECALCULATION END ===\n');
+
+    // Add lostMarks to the evaluation result
+    // Note: The prompt explicitly specifies the required format, so normalization is not needed
+    return addLostMarksToEvaluation(parsedResult);
 
   } catch (error) {
     console.error("Error evaluating submission with text-based approach:", error);
     const totalPossibleScore = calculateTotalPossibleScore(assignmentData, rubricData);
-    return {
+    return addLostMarksToEvaluation({
       overallGrade: 0,
       totalPossible: totalPossibleScore,
       criteriaGrades: [],
@@ -1528,7 +1767,7 @@ IMPORTANT: For questionScores, if a question has subsections (e.g., Question 1a,
       areasForImprovement: ["Resubmit for evaluation"],
       suggestions: ["Contact instructor for manual evaluation"],
       processingError: error.message
-    };
+    });
   }
 }
 
@@ -1676,6 +1915,9 @@ async function evaluateProjectSubmission(submission, projectData = null, rubricD
       console.error('Error generating overall feedback:', error);
       evaluationResult.overallFeedback = 'Could not generate overall feedback due to an error.';
     }
+
+    // Add lostMarks to the evaluation result
+    evaluationResult = addLostMarksToProjectEvaluation(evaluationResult, project.totalPoints);
 
     // Update the submission with the evaluation results
     submission.evaluationResult = evaluationResult;
@@ -1942,7 +2184,7 @@ Return as JSON with this structure:
   "has_embedded_rubric": true/false (whether explicit marking criteria were found),
   "grading_criteria": [
     {
-      "question_number": "Question or section this applies to",
+      "question_number": "Task/subtask with fullmarks (e.g., '1 (fullmarks)', '1(a) (fullmarks)', '3.2.1 (fullmarks)')",
       "criterionName": "What is being evaluated",
       "weight": "Point value (numeric)",
       "description": "Detailed description of what this criterion measures",
@@ -2283,10 +2525,11 @@ CRITICAL REQUIREMENTS:
    - marking_scale: Description of different performance levels (if provided)
 
 3. FORMATTING RULES
-   - Use dot notation for hierarchical IDs: "1", "1.1", "1.2", "3.2.1", "3.2.2"
-   - Convert parenthetical notation: "1(a)" → "1.1", "3.2(b)" → "3.2.2"
+   - Keep the task/subtask EXACTLY as provided in the rubric
+   - Follow each task/subtask with parentheses containing the full marks
+   - Examples: "1(a) (fullmarks)", "1(ii) (fullmarks)", "1.2iii (fullmarks)"
    - Remove "Task" prefixes if present
-   - Preserve the exact structure from the rubric
+   - Preserve the exact structure and format from the rubric
 
 4. EXAMPLE - CORRECT EXTRACTION:
    If rubric shows:
@@ -2297,14 +2540,14 @@ CRITICAL REQUIREMENTS:
    {
      "grading_criteria": [
        {
-         "question_number": "3.2.1",
+         "question_number": "3.2.1 (fullmarks)",
          "criterionName": "Analysis",
          "weight": 2.0,
          "description": "Analysis of the problem",
          "marking_scale": "N/A"
        },
        {
-         "question_number": "3.2.2",
+         "question_number": "3.2.2 (fullmarks)",
          "criterionName": "Implementation",
          "weight": 1.0,
          "description": "Implementation of the solution",
@@ -2325,7 +2568,7 @@ Return as JSON with the following structure:
 {
   "grading_criteria": [
     {
-      "question_number": "Hierarchical ID (e.g., '1', '1.1', '3.2.1')",
+      "question_number": "Task/subtask with fullmarks (e.g., '1 (fullmarks)', '1(a) (fullmarks)', '3.2.1 (fullmarks)')",
       "criterionName": "Name of criterion",
       "weight": "Point value (numeric) - EXACT from rubric",
       "description": "What this criterion evaluates",
@@ -2518,10 +2761,11 @@ CRITICAL REQUIREMENTS:
    - marking_scale: Description of different performance levels (if provided)
 
 3. FORMATTING RULES
-   - Use dot notation for hierarchical IDs: "1", "1.1", "1.2", "3.2.1", "3.2.2"
-   - Convert parenthetical notation: "1(a)" → "1.1", "3.2(b)" → "3.2.2"
+   - Keep the task/subtask EXACTLY as provided in the rubric
+   - Follow each task/subtask with parentheses containing the full marks
+   - Examples: "1(a) (fullmarks)", "1(ii) (fullmarks)", "1.2iii (fullmarks)"
    - Remove "Task" prefixes if present
-   - Preserve the exact structure from the rubric
+   - Preserve the exact structure and format from the rubric
 
 4. EXAMPLE - CORRECT EXTRACTION:
    If rubric shows:
@@ -2532,14 +2776,14 @@ CRITICAL REQUIREMENTS:
    {
      "grading_criteria": [
        {
-         "question_number": "3.2.1",
+         "question_number": "3.2.1 (fullmarks)",
          "criterionName": "Analysis",
          "weight": 2.0,
          "description": "Analysis of the problem",
          "marking_scale": "N/A"
        },
        {
-         "question_number": "3.2.2",
+         "question_number": "3.2.2 (fullmarks)",
          "criterionName": "Implementation",
          "weight": 1.0,
          "description": "Implementation of the solution",
@@ -2560,7 +2804,7 @@ Return as JSON with the following structure:
 {
   "grading_criteria": [
     {
-      "question_number": "Hierarchical ID (e.g., '1', '1.1', '3.2.1')",
+      "question_number": "Task/subtask with fullmarks (e.g., '1 (fullmarks)', '1(a) (fullmarks)', '3.2.1 (fullmarks)')",
       "criterionName": "Name of criterion",
       "weight": "Point value (numeric) - EXACT from rubric",
       "description": "What this criterion evaluates",
@@ -2901,7 +3145,7 @@ async function orchestrateAssignmentData(assignmentData, rubricData, solutionDat
     // Build a comprehensive prompt for orchestration
     const hasSolution = enhancedSolutionData && enhancedSolutionData.questions && enhancedSolutionData.questions.length > 0;
     const hasRubric = enhancedRubricData && enhancedRubricData.grading_criteria && enhancedRubricData.grading_criteria.length > 0;
-    
+
     // Build the output schema based on whether solution data exists
     const outputSchema = hasSolution
       ? `{
@@ -3055,7 +3299,7 @@ async function orchestrateAssignmentData(assignmentData, rubricData, solutionDat
     }
   }
 }`;
-    
+
     const prompt = `
 You are an educational content orchestrator. Your task is to validate and integrate assignment, rubric, and solution documents to ensure consistency and completeness for automated grading.
 
@@ -3295,10 +3539,11 @@ CRITICAL REQUIREMENTS:
    - marking_scale: Description of different performance levels (if provided)
 
 3. FORMATTING RULES
-   - Use dot notation for hierarchical IDs: "1", "1.1", "1.2", "3.2.1", "3.2.2"
-   - Convert parenthetical notation: "1(a)" → "1.1", "3.2(b)" → "3.2.2"
+   - Keep the task/subtask EXACTLY as provided in the rubric
+   - Follow each task/subtask with parentheses containing the full marks
+   - Examples: "1(a) (fullmarks)", "1(ii) (fullmarks)", "1.2iii (fullmarks)"
    - Remove "Task" prefixes if present
-   - Preserve the exact structure from the rubric
+   - Preserve the exact structure and format from the rubric
 
 4. EXAMPLE - CORRECT EXTRACTION:
    If rubric shows:
@@ -3309,14 +3554,14 @@ CRITICAL REQUIREMENTS:
    {
      "grading_criteria": [
        {
-         "question_number": "3.2.1",
+         "question_number": "3.2.1 (fullmarks)",
          "criterionName": "Analysis",
          "weight": 2.0,
          "description": "Analysis of the problem",
          "marking_scale": "N/A"
        },
        {
-         "question_number": "3.2.2",
+         "question_number": "3.2.2 (fullmarks)",
          "criterionName": "Implementation",
          "weight": 1.0,
          "description": "Implementation of the solution",
@@ -3335,7 +3580,7 @@ CRITICAL REQUIREMENTS:
 {
   "grading_criteria": [
     {
-      "question_number": "Hierarchical ID (e.g., '1', '1.1', '3.2.1')",
+      "question_number": "Task/subtask with fullmarks (e.g., '1 (fullmarks)', '1(a) (fullmarks)', '3.2.1 (fullmarks)')",
       "criterionName": "Name of criterion",
       "weight": "Point value (numeric) - EXACT from rubric",
       "description": "What this criterion evaluates",
@@ -3569,11 +3814,17 @@ SCORING RULES:
 - Do NOT convert scores to percentages - use raw scores
 - Ensure the sum of all criteriaGrades scores equals overallGrade
 
+⚠️ **CRITICAL SCORING REQUIREMENT - READ CAREFULLY:**
+The overallGrade MUST EXACTLY EQUAL the sum of all earned scores from questionScores:
+- For questions with subsections: overallGrade = Σ(subsection.earnedScore for all subsections)
+- For questions without subsections: overallGrade = Σ(question.earnedScore for all questions)
+- This is MANDATORY and will be validated. Any mismatch will cause grading errors.
+
 OUTPUT REQUIREMENTS:
 Return a JSON object with this EXACT structure:
 
 {
-  "overallGrade": <number between 0 and ${totalPossible}>,
+  "overallGrade": <number> (MUST equal sum of all earned scores from questionScores - this is CRITICAL),
   "totalPossible": ${totalPossible},
   "criteriaGrades": [
     {
@@ -3632,7 +3883,18 @@ CRITICAL VALIDATION:
     console.log(`   Score: ${result.overallGrade}/${totalPossible}`);
     console.log(`   Criteria grades: ${result.criteriaGrades?.length || 0}`);
     console.log(`   Strengths: ${result.strengths?.length || 0}`);
-    return result;
+
+    // *** CRITICAL FIX: Recalculate overallGrade to match sum of subtask scores ***
+    console.log('=== OVERALLGRADE RECALCULATION START (Extracted Content) ===');
+    if (result.questionScores) {
+      result = recalculateOverallGrade(result);
+    } else {
+      console.log('⚠️  No questionScores in result, skipping recalculation');
+    }
+    console.log('=== OVERALLGRADE RECALCULATION END ===\n');
+
+    // Add lostMarks to the evaluation result
+    return addLostMarksToEvaluation(result);
   } catch (error) {
     console.error('❌ [Gemini] Error evaluating submission:', error.message);
     console.error('   Full error:', error);
@@ -3668,7 +3930,7 @@ Return a JSON object:
 {
   "grading_criteria": [
     {
-      "question_number": "1",
+      "question_number": "Task/subtask with fullmarks (e.g., '1 (fullmarks)', '1(a) (fullmarks)', '3.2.1 (fullmarks)')",
       "criterionName": "Criterion name",
       "weight": 10,
       "description": "What to look for",
@@ -3688,6 +3950,191 @@ Return a JSON object:
     console.error('❌ Error extracting rubric from content:', error);
     throw new Error(`Failed to extract rubric: ${error.message}`);
   }
+}
+
+/**
+ * Calculates lostMarks from questionScores
+ * @param {Object} evaluationResult - The evaluation result containing questionScores
+ * @returns {Array} - Array of lostMarks objects with area, pointsLost, and reason
+ */
+function calculateLostMarksFromQuestionScores(evaluationResult) {
+  if (!evaluationResult || !evaluationResult.questionScores) {
+    return [];
+  }
+
+  const lostMarks = [];
+
+  evaluationResult.questionScores.forEach(qs => {
+    const qNum = qs.questionNumber || 'Unknown';
+
+    // Check if question has subsections
+    if (qs.subsections && qs.subsections.length > 0) {
+      qs.subsections.forEach(sub => {
+        const maxScore = sub.maxScore || 0;
+        const earnedScore = sub.earnedScore || 0;
+        const pointsLost = maxScore - earnedScore;
+
+        if (pointsLost > 0) {
+          const subsecNum = sub.subsectionNumber || '';
+          let formattedKey;
+          if (/^\d+$/.test(subsecNum)) {
+            formattedKey = `${qNum}.${subsecNum}`;
+          } else if (subsecNum) {
+            formattedKey = `${qNum}(${subsecNum})`;
+          } else {
+            formattedKey = qNum;
+          }
+
+          // Extract feedback directly (Gemini generates brief feedback now)
+          let reason = sub.feedback || `Lost ${pointsLost} marks in subsection ${subsecNum}`;
+
+          lostMarks.push({
+            area: formattedKey,
+            pointsLost: parseFloat(pointsLost.toFixed(2)), // Round to 2 decimal places
+            reason: reason.trim()
+          });
+        }
+      });
+    } else {
+      // No subsections, check the main question
+      const maxScore = qs.maxScore || 0;
+      const earnedScore = qs.earnedScore || 0;
+      const pointsLost = maxScore - earnedScore;
+
+      if (pointsLost > 0) {
+        // Extract feedback directly (Gemini generates brief feedback now)
+        let reason = qs.feedback || `Lost ${pointsLost} marks in question ${qNum}`;
+
+        lostMarks.push({
+          area: qNum,
+          pointsLost: parseFloat(pointsLost.toFixed(2)), // Round to 2 decimal places
+          reason: reason.trim()
+        });
+      }
+    }
+  });
+
+  console.log(`\n=== LOST MARKS CALCULATION ===`);
+  console.log(`Total deductions found: ${lostMarks.length}`);
+  lostMarks.forEach((lm, idx) => {
+    console.log(`  ${idx + 1}. ${lm.area}: -${lm.pointsLost} points - ${lm.reason.substring(0, 80)}${lm.reason.length > 80 ? '...' : ''}`);
+  });
+  console.log(`=== END LOST MARKS CALCULATION ===\n`);
+
+  return lostMarks;
+}
+
+/**
+ * Recalculates overallGrade from questionScores to ensure it matches the sum of all subtask scores
+ * This fixes the issue where Gemini might return an overallGrade that doesn't match the sum
+ * @param {Object} evaluationResult - The evaluation result from Gemini
+ * @returns {Object} - Evaluation result with corrected overallGrade
+ */
+function recalculateOverallGrade(evaluationResult) {
+  if (!evaluationResult || !evaluationResult.questionScores) {
+    return evaluationResult;
+  }
+
+  // Calculate the sum of all earned scores from questionScores
+  let calculatedOverallGrade = 0;
+  
+  evaluationResult.questionScores.forEach(qs => {
+    if (qs.subsections && qs.subsections.length > 0) {
+      // Sum subsection scores
+      qs.subsections.forEach(sub => {
+        calculatedOverallGrade += Number(sub.earnedScore || 0);
+      });
+    } else {
+      // Use main question score
+      calculatedOverallGrade += Number(qs.earnedScore || 0);
+    }
+  });
+
+  // Round to 2 decimal places to avoid floating point issues
+  calculatedOverallGrade = Math.round(calculatedOverallGrade * 100) / 100;
+
+  // Get the original overallGrade for comparison
+  const originalOverallGrade = evaluationResult.overallGrade;
+
+  // Update the overallGrade to match the calculated sum
+  evaluationResult.overallGrade = calculatedOverallGrade;
+
+  // Log the correction if there was a mismatch
+  if (originalOverallGrade !== calculatedOverallGrade) {
+    console.log(`⚠️  OverallGrade mismatch detected and corrected:`);
+    console.log(`   Original: ${originalOverallGrade}`);
+    console.log(`   Corrected: ${calculatedOverallGrade}`);
+    console.log(`   Difference: ${Math.abs(originalOverallGrade - calculatedOverallGrade).toFixed(2)}`);
+  } else {
+    console.log(`✅ OverallGrade matches sum of subtask scores: ${calculatedOverallGrade}`);
+  }
+
+  return evaluationResult;
+}
+
+/**
+ * Adds lostMarks to evaluation result if missing
+ * @param {Object} evaluationResult - The evaluation result
+ * @returns {Object} - Evaluation result with lostMarks added
+ */
+function addLostMarksToEvaluation(evaluationResult) {
+  if (!evaluationResult) return evaluationResult;
+
+  // If lostMarks already exists, return as is
+  if (evaluationResult.lostMarks) return evaluationResult;
+
+  // Calculate lostMarks from questionScores
+  evaluationResult.lostMarks = calculateLostMarksFromQuestionScores(evaluationResult);
+
+  return evaluationResult;
+}
+
+/**
+ * Adds lostMarks to project evaluation result
+ * @param {Object} evaluationResult - The project evaluation result
+ * @param {number} totalPoints - Total points for the project
+ * @returns {Object} - Evaluation result with lostMarks added
+ */
+function addLostMarksToProjectEvaluation(evaluationResult, totalPoints) {
+  if (!evaluationResult) return evaluationResult;
+
+  // If lostMarks already exists, return as is
+  if (evaluationResult.lostMarks) return evaluationResult;
+
+  const lostMarks = [];
+
+  // Handle code evaluation
+  if (evaluationResult.codeEvaluation && evaluationResult.codeEvaluation.score !== null) {
+    const codeMax = totalPoints / 2; // Assuming equal split
+    const codeScore = evaluationResult.codeEvaluation.score;
+    const codeLost = codeMax - codeScore;
+
+    if (codeLost > 0) {
+      lostMarks.push({
+        area: 'Code',
+        pointsLost: codeLost,
+        reason: evaluationResult.codeEvaluation.feedback || `Lost ${codeLost} marks in code evaluation`
+      });
+    }
+  }
+
+  // Handle report evaluation
+  if (evaluationResult.reportEvaluation && evaluationResult.reportEvaluation.score !== null) {
+    const reportMax = totalPoints / 2; // Assuming equal split
+    const reportScore = evaluationResult.reportEvaluation.score;
+    const reportLost = reportMax - reportScore;
+
+    if (reportLost > 0) {
+      lostMarks.push({
+        area: 'Report',
+        pointsLost: reportLost,
+        reason: evaluationResult.reportEvaluation.feedback || `Lost ${reportLost} marks in report evaluation`
+      });
+    }
+  }
+
+  evaluationResult.lostMarks = lostMarks;
+  return evaluationResult;
 }
 
 module.exports = {
@@ -3715,5 +4162,12 @@ module.exports = {
   evaluateWithExtractedContent,
   extractRubricFromContent,
   // Schema extraction for consistent grading
-  analyzeRubricForSchema
+  analyzeRubricForSchema,
+  analyzeRubricJSONForSchema,
+  // Response schema builder
+  buildEvaluationResponseSchema,
+  // Lost marks calculation
+  calculateLostMarksFromQuestionScores,
+  addLostMarksToEvaluation,
+  addLostMarksToProjectEvaluation
 };

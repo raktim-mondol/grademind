@@ -19,7 +19,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
   const [processingStatus, setProcessingStatus] = useState(null);
   const [showProcessedData, setShowProcessedData] = useState(false);
   const [activeDataSection, setActiveDataSection] = useState('assignment'); // 'assignment', 'rubric', 'solution', 'schema'
-  
+
   // Flag to track if we're in manual evaluation mode (to skip automatic polling)
   const [isManualEvaluation, setIsManualEvaluation] = useState(false);
 
@@ -37,6 +37,15 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         });
         setProcessingStatus(response.data);
+        
+        // Log grading schema status for debugging
+        if (response.data?.gradingSchema) {
+          console.log('✅ Grading schema available:', {
+            tasks: response.data.gradingSchema.tasks?.length || 0,
+            totalMarks: response.data.gradingSchema.total_marks,
+            status: response.data.gradingSchemaStatus
+          });
+        }
       } catch (error) {
         console.error('Error polling status:', error);
       }
@@ -56,8 +65,11 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
       const solutionDone = processingStatus?.solutionProcessingStatus === 'completed' ||
         processingStatus?.solutionProcessingStatus === 'failed' ||
         processingStatus?.solutionProcessingStatus === 'not_applicable';
+      const schemaDone = processingStatus?.gradingSchemaStatus === 'completed' ||
+        processingStatus?.gradingSchemaStatus === 'failed' ||
+        processingStatus?.gradingSchemaStatus === 'not_applicable';
 
-      const allProcessingComplete = assignmentDone && rubricDone && solutionDone;
+      const allProcessingComplete = assignmentDone && rubricDone && solutionDone && schemaDone;
 
       if (!allProcessingComplete) {
         pollStatus();
@@ -261,7 +273,9 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
   }, [assignment.backendId, assignment.sections, isManualEvaluation]);
 
   // Check if processing is complete - only when ALL documents are processed
-  const isProcessingComplete = processingStatus?.evaluationReadyStatus === 'ready';
+  const isProcessingComplete = processingStatus?.evaluationReadyStatus === 'ready' || 
+    (processingStatus?.assignmentProcessingStatus === 'completed' && 
+     processingStatus?.gradingSchemaStatus === 'completed');
 
   useEffect(() => {
     if (assignment.sections.length === 0) {
@@ -642,7 +656,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
               actionableTips: 'Please try again or contact support if the issue persists.'
             };
             studentsToGrade[i].status = 'error';
-            
+
             // Update UI for error state
             const errorSectionState = { ...activeSection, students: [...studentsToGrade] };
             const errorSectionsState = assignment.sections.map(s => s.id === activeSection.id ? errorSectionState : s);
@@ -676,7 +690,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
         });
 
         const submission = response.data?.submissions?.find(s => s._id === submissionId);
-        
+
         if (!submission) {
           console.error(`Submission ${submissionId} not found`);
           throw new Error('Submission not found');
@@ -686,7 +700,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
 
         if (status === 'completed') {
           console.log(`✅ Evaluation completed for ${student.name}! Score: ${submission.overallGrade}/${submission.totalPossible}`);
-          
+
           // Update student with results
           student.result = {
             score: submission.overallGrade || 0,
@@ -700,11 +714,11 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             questionScores: submission.evaluationResult?.questionScores || []
           };
           student.status = 'completed';
-          
+
           return true;
         } else if (status === 'failed') {
           console.error(`❌ Evaluation failed for ${student.name}: ${submission.evaluationError}`);
-          
+
           student.result = {
             score: 0,
             maxScore: totalScore || 100,
@@ -715,7 +729,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             actionableTips: 'Please try again or contact support if the issue persists.'
           };
           student.status = 'error';
-          
+
           return false;
         } else if (status === 'processing') {
           // Still processing, log progress
@@ -724,7 +738,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
 
         // Still processing, wait before next poll
         await new Promise(resolve => setTimeout(resolve, pollInterval));
-        
+
       } catch (error) {
         console.error('Error polling for evaluation status:', error);
         // Wait and retry
@@ -969,6 +983,14 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             >
               <ChevronLeft className="w-4 h-4" /> Back to Workspaces
             </button>
+            
+            {/* Grading Schema Indicator */}
+            {processingStatus?.gradingSchemaStatus === 'completed' && processingStatus?.gradingSchema && (
+              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-lg text-xs font-medium text-green-700">
+                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                Ready
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -1108,6 +1130,29 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                       <p className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">{processingStatus.solutionProcessingError}</p>
                     )}
                   </div>
+
+                  {/* Grading Schema Status */}
+                  <div className="p-4 bg-zinc-50 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-5 h-5 text-zinc-400" />
+                        <span className="font-medium">Grading Schema</span>
+                      </div>
+                      <span className={`text-sm font-mono px-2 py-1 rounded ${processingStatus.gradingSchemaStatus === 'completed' ? 'bg-green-100 text-green-700' :
+                        processingStatus.gradingSchemaStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
+                          processingStatus.gradingSchemaStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                            processingStatus.gradingSchemaStatus === 'not_applicable' ? 'bg-zinc-100 text-zinc-400' :
+                              'bg-zinc-100 text-zinc-500'
+                        }`}>
+                        {processingStatus.gradingSchemaStatus || 'pending'}
+                      </span>
+                    </div>
+                    {processingStatus.gradingSchemaStatus === 'completed' && processingStatus.gradingSchema && (
+                      <p className="mt-2 text-xs text-green-600 bg-green-50 p-2 rounded">
+                        Schema extracted: {processingStatus.gradingSchema.tasks?.length || 0} tasks, {processingStatus.gradingSchema.total_marks || '?'} total marks
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1245,6 +1290,7 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
             </div>
           )}
 
+
           {/* Show student upload section only when processing is complete and not viewing processed data */}
           {isProcessingComplete && !showProcessedData && !activeSection?.students?.length ? (
             <div className="h-full flex flex-col items-center justify-center text-zinc-400 border-2 border-dashed border-zinc-100 rounded-2xl">
@@ -1252,7 +1298,11 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                 <CheckCircle className="w-8 h-8 text-green-500" />
               </div>
               <p className="text-lg font-medium text-zinc-900">Assignment Ready</p>
-              <p className="text-sm max-w-sm text-center mt-2 mb-4">Processing complete. You can now upload student submissions.</p>
+              <p className="text-sm max-w-sm text-center mt-2 mb-4">
+                {processingStatus?.gradingSchema ? 
+                  'Grading schema extracted. You can now upload student submissions.' : 
+                  'Processing complete. You can now upload student submissions.'}
+              </p>
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowProcessedData(true)}
@@ -1395,13 +1445,6 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                           </div>
                         </div>
                         <div className="p-8 overflow-y-auto space-y-8">
-                          <div>
-                            <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Evaluation Summary</h4>
-                            <p className="text-sm text-zinc-700 leading-7">
-                              {selectedStudent.result.feedback}
-                            </p>
-                          </div>
-
                           <div className="grid grid-cols-2 gap-8">
                             <div className="bg-green-50/50 p-4 rounded-lg border border-green-100/50">
                               <h4 className="text-xs font-bold text-green-700 uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -1427,15 +1470,6 @@ const Dashboard = ({ assignment, onUpdateAssignment, onBack }) => {
                                 ))}
                               </ul>
                             </div>
-                          </div>
-
-                          <div className="bg-blue-50 p-5 rounded-xl border border-blue-100">
-                            <h4 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
-                              <Brain className="w-3 h-3" /> Actionable Tip
-                            </h4>
-                            <p className="text-sm text-blue-900 font-medium">
-                              {selectedStudent.result.actionableTips}
-                            </p>
                           </div>
 
                           {selectedStudent.result.modelScores && Object.keys(selectedStudent.result.modelScores).length > 1 && (

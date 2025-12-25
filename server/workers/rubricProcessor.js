@@ -3,7 +3,7 @@
  * Processes rubric documents using Landing AI for extraction and Gemini API for processing
  */
 const { rubricProcessingQueue } = require('../config/queue');
-const { processRubricPDF, processRubricContent, analyzeRubricForSchema } = require('../utils/geminiService');
+const { processRubricPDF, processRubricContent, analyzeRubricForSchema, analyzeRubricJSONForSchema, buildEvaluationResponseSchema } = require('../utils/geminiService');
 const { extractWithRetry, formatExtractedContent, isConfigured: isLandingAIConfigured } = require('../utils/landingAIService');
 const { Assignment } = require('../models/assignment');
 const { updateAssignmentEvaluationReadiness, checkAndTriggerOrchestration } = require('../utils/assignmentUtils');
@@ -96,22 +96,44 @@ rubricProcessingQueue.process(async (job) => {
     const readyStatus = await updateAssignmentEvaluationReadiness(assignmentId);
     console.log(`Rubric for assignment ${assignmentId} processed successfully. Evaluation ready status: ${readyStatus}`);
 
-    // Extract grading schema for consistent evaluation
-    console.log(`📊 Extracting grading schema for consistent evaluation...`);
+    // Extract grading schema from processed rubric JSON
+    console.log(`📊 Extracting grading schema from processed rubric...`);
+    let gradingSchema = null;
+    let responseSchema = null;
     try {
-      const schemaResult = await analyzeRubricForSchema(pdfFilePath);
-      if (schemaResult.success) {
-        await Assignment.findByIdAndUpdate(assignmentId, {
-          gradingSchema: schemaResult.schema,
-          gradingSchemaStatus: 'completed',
-          gradingSchemaExtractedAt: new Date()
-        });
-        console.log(`✓ Grading schema extracted: ${schemaResult.schema.tasks?.length || 0} tasks, ${schemaResult.schema.total_marks || '?'} marks`);
+      if (processedRubric && processedRubric.grading_criteria) {
+        const schemaResult = await analyzeRubricJSONForSchema(processedRubric);
+        if (schemaResult.success) {
+          gradingSchema = schemaResult.schema;
+
+          // OPTIMIZATION: Also build and store responseSchema to avoid rebuilding during evaluation
+          console.log(`🔧 Building response schema from grading schema...`);
+          const assignment = await Assignment.findById(assignmentId);
+          responseSchema = buildEvaluationResponseSchema(
+            { gradingSchema },
+            null
+          );
+
+          await Assignment.findByIdAndUpdate(assignmentId, {
+            gradingSchema: gradingSchema,
+            gradingSchemaStatus: 'completed',
+            gradingSchemaExtractedAt: new Date(),
+            responseSchema: responseSchema,
+            responseSchemaBuiltAt: new Date()
+          });
+          console.log(`✓ Grading schema extracted: ${gradingSchema.tasks?.length || 0} tasks, ${gradingSchema.total_marks || '?'} marks`);
+          console.log(`✓ Response schema built and stored for fast evaluation`);
+        } else {
+          console.warn(`⚠️ Schema extraction failed: ${schemaResult.error}`);
+          await Assignment.findByIdAndUpdate(assignmentId, {
+            gradingSchemaStatus: 'failed',
+            gradingSchemaError: schemaResult.error
+          });
+        }
       } else {
-        console.warn(`⚠️ Schema extraction failed: ${schemaResult.error}`);
+        console.warn('⚠️ No processed rubric available for schema extraction');
         await Assignment.findByIdAndUpdate(assignmentId, {
-          gradingSchemaStatus: 'failed',
-          gradingSchemaError: schemaResult.error
+          gradingSchemaStatus: 'not_applicable'
         });
       }
     } catch (schemaError) {

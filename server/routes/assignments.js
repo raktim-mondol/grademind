@@ -16,6 +16,11 @@ const {
   extractMetadata
 } = require('../controllers/assignmentController');
 
+const {
+  createAssignmentAtomic,
+  isAtomicCreationAvailable
+} = require('../controllers/atomicAssignmentController');
+
 // Configure multer for storing uploaded files
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -106,5 +111,20 @@ router.put('/:id',
 
 // DELETE /api/assignments/:id - Delete assignment
 router.delete('/:id', deleteAssignment);
+
+// POST /api/assignments/atomic - Create assignment atomically (waits for all processing)
+router.post('/atomic',
+  upload.fields([
+    { name: 'assignment', maxCount: 1 },
+    { name: 'solution', maxCount: 1 },
+    { name: 'rubric', maxCount: 1 }
+  ]),
+  enforcePlanLimits('create_assignment'),
+  logActivity('assignment_created', 'assignment'),
+  createAssignmentAtomic
+);
+
+// GET /api/assignments/atomic/available - Check if atomic creation is available
+router.get('/atomic/available', isAtomicCreationAvailable);
 
 module.exports = router;

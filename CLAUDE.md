@@ -1065,6 +1065,12 @@ useEffect(() => {
 - **Fix**: Enhanced prompt + deduplication function after normalization
 - **Reference**: `RUBRIC_SCHEMA_DEDUPLICATION_FIX.md`, `CHANGES_SUMMARY_RUBRIC_FIX.md`
 
+**OverallGrade Mismatch** (FIXED):
+- **Issue**: Student total mark didn't match sum of individual subtask scores
+- **Cause**: Gemini API returning overallGrade that didn't equal sum of earned scores
+- **Fix**: Added post-processing recalculation + enhanced prompts with critical scoring requirements
+- **Reference**: `server/OVERALLGRADE_FIX.md`
+
 ---
 
 ## Best Practices for AI Assistants
@@ -1124,6 +1130,7 @@ useEffect(() => {
 - **`RERUN_ORCHESTRATION_GUIDE.md`**: Manual orchestration trigger guide
 - **`ORCHESTRATION_UI_IMPLEMENTATION.md`**: Orchestration feature implementation
 - **`TESTING_EXCEL_FIX.md`**: Testing procedures for Excel export
+- **`server/OVERALLGRADE_FIX.md`**: Fix for overallGrade mismatch issue
 
 ### External Documentation
 

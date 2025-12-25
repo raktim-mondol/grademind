@@ -10,6 +10,7 @@ import Privacy from './Privacy';
 import Terms from './Terms';
 import Settings from './Settings';
 import ConfirmationModal from '../components/ui/ConfirmationModal';
+import { Loader2, CheckCircle, FileText, Clock } from './Icons';
 
 const AppView = {
   LANDING: 'LANDING',
@@ -33,6 +34,12 @@ function GradeMindApp() {
   const [activeAssignmentId, setActiveAssignmentId] = useState(null);
 
   const [landingPage, setLandingPage] = useState('home');
+  const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
+  const [creationProgress, setCreationProgress] = useState({
+    status: 'idle',
+    message: '',
+    details: []
+  });
 
   // Confirmation Modal State
   const [confirmation, setConfirmation] = useState({
@@ -267,6 +274,13 @@ function GradeMindApp() {
   };
 
   const handleCreateAssignment = async (config) => {
+    setIsCreatingAssignment(true);
+    setCreationProgress({
+      status: 'processing',
+      message: 'Starting assignment creation...',
+      details: ['Preparing files for upload']
+    });
+
     try {
       // Create FormData for multipart upload
       const formData = new FormData();
@@ -291,27 +305,32 @@ function GradeMindApp() {
       if (config.assignmentFile) {
         const blob = base64ToBlob(config.assignmentFile.data, config.assignmentFile.mimeType);
         formData.append('assignment', blob, config.assignmentFile.name);
+        setCreationProgress(prev => ({ ...prev, details: [...prev.details, 'Assignment file ready'] }));
       } else if (config.assignmentText) {
-        // Send assignment text as a text field
         formData.append('assignmentText', config.assignmentText);
+        setCreationProgress(prev => ({ ...prev, details: [...prev.details, 'Assignment text ready'] }));
       }
 
       // Handle rubric file
       if (config.rubricFile) {
         const blob = base64ToBlob(config.rubricFile.data, config.rubricFile.mimeType);
         formData.append('rubric', blob, config.rubricFile.name);
+        setCreationProgress(prev => ({ ...prev, details: [...prev.details, 'Rubric file ready'] }));
       } else if (config.rubric) {
         const blob = new Blob([config.rubric], { type: 'text/plain' });
         formData.append('rubric', blob, 'rubric.txt');
+        setCreationProgress(prev => ({ ...prev, details: [...prev.details, 'Rubric text ready'] }));
       }
 
       // Handle solution file
       if (config.solutionFile) {
         const blob = base64ToBlob(config.solutionFile.data, config.solutionFile.mimeType);
         formData.append('solution', blob, config.solutionFile.name);
+        setCreationProgress(prev => ({ ...prev, details: [...prev.details, 'Solution file ready'] }));
       } else if (config.solution) {
         const blob = new Blob([config.solution], { type: 'text/plain' });
         formData.append('solution', blob, 'solution.txt');
+        setCreationProgress(prev => ({ ...prev, details: [...prev.details, 'Solution text ready'] }));
       }
 
       // Add AI config as JSON in sections
@@ -321,20 +340,50 @@ function GradeMindApp() {
       }];
       formData.append('sections', JSON.stringify(sections));
 
+      setCreationProgress({
+        status: 'processing',
+        message: 'Uploading and processing files...',
+        details: ['This may take 1-2 minutes depending on file size', 'Gemini API is analyzing your documents']
+      });
+
       console.log('📤 Sending assignment to backend API...');
 
       // Get auth token from Clerk
       const token = await getToken();
 
-      // POST to backend API
-      const response = await api.post('/assignments', formData, {
+      // POST to backend API using ATOMIC endpoint for immediate processing
+      console.log('🔄 Using atomic endpoint - this will process all files immediately...');
+      
+      // Start a background timer to show progress updates
+      const startTime = Date.now();
+      const progressInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        setCreationProgress(prev => ({
+          ...prev,
+          details: [
+            `Processing... ${elapsed}s elapsed`,
+            'Gemini API analyzing documents',
+            'Extracting grading schema'
+          ]
+        }));
+      }, 5000);
+
+      const response = await api.post('/assignments/atomic', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
           ...(token && { 'Authorization': `Bearer ${token}` })
         }
       });
 
-      console.log('✅ Assignment created:', response.data);
+      clearInterval(progressInterval);
+
+      console.log('✅ Assignment created atomically:', response.data);
+
+      setCreationProgress({
+        status: 'completed',
+        message: 'Assignment created successfully!',
+        details: ['All documents processed', 'Grading schema extracted', 'Ready for student submissions']
+      });
 
       // Create local assignment object with backend ID
       const newAssignment = {
@@ -343,15 +392,28 @@ function GradeMindApp() {
         sections: [],
         createdAt: Date.now(),
         backendId: response.data.assignment._id,
-        processingStatus: response.data.assignment.processingStatus
+        processingStatus: response.data.assignment.processingStatus,
+        gradingSchemaStatus: response.data.assignment.gradingSchemaStatus,
+        gradingSchema: response.data.assignment.gradingSchema
       };
 
       setAssignments(prev => [...prev, newAssignment]);
       setActiveAssignmentId(newAssignment.id);
-      setView(AppView.DASHBOARD);
+
+      // Wait a moment for user to see success message, then navigate
+      setTimeout(() => {
+        setIsCreatingAssignment(false);
+        setView(AppView.DASHBOARD);
+      }, 1500);
 
     } catch (error) {
       console.error('❌ Error creating assignment:', error);
+      setIsCreatingAssignment(false);
+      setCreationProgress({
+        status: 'error',
+        message: 'Failed to create assignment',
+        details: [error.response?.data?.error || error.message]
+      });
       alert(`Failed to create assignment: ${error.response?.data?.error || error.message}`);
     }
   };
@@ -418,6 +480,121 @@ function GradeMindApp() {
     return 'User';
   };
 
+  // Processing screen component
+  const ProcessingScreen = () => {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white p-6">
+        <div className="max-w-2xl w-full">
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden">
+            {/* Header */}
+            <div className="bg-zinc-900 text-white p-6">
+              <div className="flex items-center gap-3">
+                <div className="bg-white/10 p-2 rounded-lg">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold">Creating Assignment</h2>
+                  <p className="text-zinc-400 text-sm mt-1">{creationProgress.message}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Progress Details */}
+            <div className="p-6 space-y-4">
+              <div className="space-y-2">
+                {creationProgress.details.map((detail, index) => (
+                  <div key={index} className="flex items-start gap-3 text-sm">
+                    <div className="mt-1">
+                      {creationProgress.status === 'completed' ? (
+                        <CheckCircle className="w-4 h-4 text-green-500" />
+                      ) : creationProgress.status === 'error' ? (
+                        <div className="w-4 h-4 rounded-full bg-red-500"></div>
+                      ) : (
+                        <div className="w-4 h-4 rounded-full bg-blue-500 animate-pulse"></div>
+                      )}
+                    </div>
+                    <span className="text-zinc-700">{detail}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Status Badge */}
+              <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
+                <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Status</span>
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  creationProgress.status === 'completed' ? 'bg-green-100 text-green-700' :
+                  creationProgress.status === 'error' ? 'bg-red-100 text-red-700' :
+                  'bg-blue-100 text-blue-700'
+                }`}>
+                  {creationProgress.status.toUpperCase()}
+                </span>
+              </div>
+
+              {/* Expected Time Notice */}
+              {creationProgress.status === 'processing' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-amber-800 text-sm">
+                    <Clock className="w-4 h-4" />
+                    <span><strong>Expected time:</strong> 1-2 minutes for PDF processing</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Success Actions */}
+              {creationProgress.status === 'completed' && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 text-green-800 mb-2">
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-semibold">Assignment Ready!</span>
+                  </div>
+                  <p className="text-sm text-green-700 mb-3">
+                    Your assignment has been created and all documents have been processed.
+                    You'll be redirected to the dashboard automatically.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setIsCreatingAssignment(false);
+                      setView(AppView.DASHBOARD);
+                    }}
+                    className="w-full bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700 transition-colors"
+                  >
+                    Go to Dashboard Now
+                  </button>
+                </div>
+              )}
+
+              {/* Error Actions */}
+              {creationProgress.status === 'error' && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 text-red-800 mb-2">
+                    <div className="w-5 h-5 rounded-full bg-red-500"></div>
+                    <span className="font-semibold">Creation Failed</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setIsCreatingAssignment(false);
+                      setCreationProgress({ status: 'idle', message: '', details: [] });
+                      setView(AppView.WORKSPACES);
+                    }}
+                    className="w-full bg-red-600 text-white py-2 rounded-lg font-medium hover:bg-red-700 transition-colors"
+                  >
+                    Return to Workspaces
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Backend Info */}
+          <div className="mt-4 text-center text-xs text-zinc-400">
+            <p>Backend is processing your files using Gemini API</p>
+            <p className="mt-1">Check browser console for detailed logs</p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Show loading state while Clerk is initializing
   if (!isLoaded) {
     return (
@@ -425,6 +602,11 @@ function GradeMindApp() {
         <div className="text-zinc-500">Loading...</div>
       </div>
     );
+  }
+
+  // Show processing screen during assignment creation
+  if (isCreatingAssignment) {
+    return <ProcessingScreen />;
   }
 
   return (

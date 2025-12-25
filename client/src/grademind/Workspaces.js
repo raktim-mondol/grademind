@@ -46,7 +46,8 @@ const Workspaces = ({
   const handleCreateAssignmentComplete = async (config) => {
     try {
       await onCreateNew(config);
-      setMode('LIST');
+      // Don't set mode to LIST here - the parent component (GradeMindApp) will handle
+      // navigation after atomic processing completes
     } catch (error) {
       // Check if it's a plan limit error
       if (error.response?.data?.upgradeRequired) {

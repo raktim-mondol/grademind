@@ -1186,7 +1186,7 @@ exports.uploadBatchSubmissions = async (req, res) => {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       console.log(`\n--- Processing file ${i + 1} of ${files.length}: ${file.originalname} ---`);
-      
+
       try {
         const studentId = path.parse(file.originalname).name;
         const studentName = studentId;
@@ -1358,52 +1358,52 @@ exports.uploadBatchSubmissions = async (req, res) => {
 // Helper function to wait for submission processing to complete
 async function waitForSubmissionProcessing(submissionId, maxWaitTime = 300000) { // 5 minutes max
   const startTime = Date.now();
-  
+
   while (Date.now() - startTime < maxWaitTime) {
     const submission = await Submission.findById(submissionId);
-    
+
     if (!submission) {
       throw new Error(`Submission ${submissionId} not found`);
     }
-    
+
     if (submission.processingStatus === 'completed') {
       return true;
     }
-    
+
     if (submission.processingStatus === 'failed') {
       throw new Error(`Submission processing failed: ${submission.processingError || 'Unknown error'}`);
     }
-    
+
     // Wait 1 second before checking again
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
-  
+
   throw new Error(`Submission processing timeout after ${maxWaitTime}ms`);
 }
 
 // Helper function to wait for evaluation to complete
 async function waitForEvaluation(submissionId, maxWaitTime = 300000) { // 5 minutes max
   const startTime = Date.now();
-  
+
   while (Date.now() - startTime < maxWaitTime) {
     const submission = await Submission.findById(submissionId);
-    
+
     if (!submission) {
       throw new Error(`Submission ${submissionId} not found`);
     }
-    
+
     if (submission.evaluationStatus === 'completed') {
       return true;
     }
-    
+
     if (submission.evaluationStatus === 'failed') {
       throw new Error(`Evaluation failed: ${submission.evaluationError || 'Unknown error'}`);
     }
-    
+
     // Wait 1 second before checking again
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
-  
+
   throw new Error(`Evaluation timeout after ${maxWaitTime}ms`);
 }
 
@@ -1543,71 +1543,324 @@ exports.exportToExcel = async (req, res) => {
 
       const worksheet = workbook.addWorksheet(safeSheetName);
 
-      // --- 1. Determine Dynamic Question Columns ---
-      // We scan all submissions to find all possible Question Numbers (e.g. 1.1, 1.2)
-      // to ensure the columns exist even if some students skipped them.
+      // --- Helper: Convert Roman numeral to number ---
+      function romanToNumber(roman) {
+        if (!roman) return null;
+        const romanLower = roman.toLowerCase().trim();
+        const romanMap = {
+          'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
+          'vi': 6, 'vii': 7, 'viii': 8, 'ix': 9, 'x': 10,
+          'xi': 11, 'xii': 12, 'xiii': 13, 'xiv': 14, 'xv': 15,
+          'xvi': 16, 'xvii': 17, 'xviii': 18, 'xix': 19, 'xx': 20
+        };
+        return romanMap[romanLower] || null;
+      }
+
+      // --- Helper: Check if string is a Roman numeral ---
+      function isRomanNumeral(str) {
+        if (!str) return false;
+        return /^[ivx]+$/i.test(str.trim());
+      }
+
+      // --- Helper: Convert letter to number (a=1, b=2, etc.) ---
+      function letterToNumber(letter) {
+        if (!letter || letter.length !== 1) return null;
+        const code = letter.toLowerCase().charCodeAt(0);
+        if (code >= 97 && code <= 122) { // a-z
+          return code - 96;
+        }
+        return null;
+      }
+
+      // --- Helper: Normalize subtask key to consistent dot notation ---
+      // Converts various formats to canonical "X.Y.Z" format
+      // Handles: letters (a,b,c), Roman numerals (i,ii,iii), parenthetical formats
+      // Supports deep nesting: 1.2.3.4.5
+      // CRITICAL: Handles cases where Gemini returns FULL ID (e.g., "2.1") or RELATIVE ID (e.g., "1")
+      function normalizeSubtaskKey(qNum, subsecNum) {
+        if (!subsecNum) return String(qNum);
+
+        const qNumStr = String(qNum).trim();
+        let normalized = String(subsecNum).trim();
+
+        // Remove "Task", "Question", "Q" prefixes
+        normalized = normalized.replace(/^(Task|Question|Q)\s*/i, '');
+
+        // Handle parenthetical formats: convert "1(a)" to "1.1", "1(ii)" to "1.2", "1(2.1)" to "1.2.1"
+        // This handles nested parentheticals too: "1.2(a)" -> "1.2.1"
+        normalized = normalized.replace(/(\d+(?:\.\d+)*)\(([^)]+)\)/g, (match, prefix, content) => {
+          const contentTrimmed = content.trim();
+
+          // Check if content is a Roman numeral
+          if (isRomanNumeral(contentTrimmed)) {
+            const num = romanToNumber(contentTrimmed);
+            return num ? `${prefix}.${num}` : `${prefix}.${contentTrimmed}`;
+          }
+
+          // Check if content is a single letter (a, b, c, ...)
+          if (/^[a-z]$/i.test(contentTrimmed)) {
+            const num = letterToNumber(contentTrimmed);
+            return num ? `${prefix}.${num}` : `${prefix}.${contentTrimmed}`;
+          }
+
+          // Check if content is multiple letters (aa, ab, etc.) - treat as letter sequence
+          if (/^[a-z]+$/i.test(contentTrimmed) && contentTrimmed.length <= 2) {
+            // For "aa" = 27, "ab" = 28, etc. or just use first letter
+            const num = letterToNumber(contentTrimmed[0]);
+            return num ? `${prefix}.${num}` : `${prefix}.${contentTrimmed}`;
+          }
+
+          // Otherwise, it's already numeric or a sub-path like "2.1"
+          return `${prefix}.${contentTrimmed}`;
+        });
+
+        // Handle standalone Roman numerals: "ii" -> "2", "iv" -> "4"
+        if (isRomanNumeral(normalized)) {
+          const num = romanToNumber(normalized);
+          if (num) normalized = String(num);
+        }
+
+        // Convert letter suffixes: "1a" -> "1.1", "1.2b" -> "1.2.2", "1.2.3c" -> "1.2.3.3"
+        normalized = normalized.replace(/(\d+(?:\.\d+)*)([a-z])$/i, (match, prefix, letter) => {
+          const num = letterToNumber(letter);
+          return num ? `${prefix}.${num}` : match;
+        });
+
+        // Convert Roman numeral suffixes: "1ii" -> "1.2", "1.2iii" -> "1.2.3"
+        normalized = normalized.replace(/(\d+(?:\.\d+)*)([ivx]+)$/i, (match, prefix, roman) => {
+          const num = romanToNumber(roman);
+          return num ? `${prefix}.${num}` : match;
+        });
+
+        // Handle space-separated formats: "1 a" -> "1.1", "1 ii" -> "1.2"
+        normalized = normalized.replace(/(\d+(?:\.\d+)*)\s+([a-z]+)$/i, (match, prefix, suffix) => {
+          if (isRomanNumeral(suffix)) {
+            const num = romanToNumber(suffix);
+            return num ? `${prefix}.${num}` : `${prefix}.${suffix}`;
+          }
+          if (suffix.length === 1) {
+            const num = letterToNumber(suffix);
+            return num ? `${prefix}.${num}` : `${prefix}.${suffix}`;
+          }
+          return match;
+        });
+
+        // Clean up any remaining non-numeric/dot characters
+        normalized = normalized.replace(/[^\d.]/g, '');
+
+        // Remove leading/trailing dots and collapse multiple dots
+        normalized = normalized.replace(/^\.+|\.+$/g, '').replace(/\.{2,}/g, '.');
+
+        // Handle case where normalized is empty but subsecNum was provided
+        // This handles standalone letters like "a", "b", "i", "ii"
+        if (!normalized && subsecNum) {
+          const trimmed = subsecNum.trim();
+          if (isRomanNumeral(trimmed)) {
+            const num = romanToNumber(trimmed);
+            if (num) normalized = String(num);
+          } else if (/^[a-z]$/i.test(trimmed)) {
+            const num = letterToNumber(trimmed);
+            if (num) normalized = String(num);
+          } else if (/^\d+$/.test(trimmed)) {
+            normalized = trimmed;
+          }
+        }
+
+        if (!normalized) return qNumStr;
+
+        // Subsection IDs from Gemini evaluation are ALWAYS relative to the question
+        // They should be combined with the question number to form the full ID
+        // Examples:
+        // - Question "1", subsection "1" -> "1.1"
+        // - Question "3", subsection "2.1" -> "3.2.1"
+        // - Question "3", subsection "3.1" -> "3.3.1" (NOT "3.1" - the 3.1 means subtask 3, sub-subtask 1)
+        //
+        // Note: We NEVER treat subsection IDs as full IDs because Gemini returns relative IDs
+        // even when they start with the same digit as the question number.
+
+        // Always prepend the question number
+        return `${qNumStr}.${normalized}`;
+      }
+
+      // --- Helper: Normalize schema key to canonical dot notation ---
+      // Converts schema task IDs to consistent format for matching with evaluation results
+      // Handles all the same formats as normalizeSubtaskKey
+      function normalizeSchemaKey(key) {
+        // Split by dots to process each part
+        const parts = key.split('.');
+        const processed = [];
+        
+        for (let part of parts) {
+          // If purely numeric, keep as-is
+          if (/^\d+$/.test(part)) {
+            processed.push(part);
+            continue;
+          }
+          
+          // Use normalizeSubtaskKey with dummy question to convert the part
+          // e.g., "1a" -> normalizeSubtaskKey("X", "1a") -> "X.1.1" -> extract "1.1"
+          const normalized = normalizeSubtaskKey('X', part);
+          const subParts = normalized.replace(/^X\./, '').split('.');
+          
+          // Add all subparts
+          processed.push(...subParts);
+        }
+        
+        return processed.join('.');
+      }
+
+      // --- 1. Determine Dynamic Question Columns from gradingSchema ---
+      // CRITICAL: Extract headers from the assignment's gradingSchema for consistency.
+      // This ensures Excel columns match the canonical schema structure exactly.
       const questionKeys = new Set();
       const questionMaxScores = new Map();
 
-      sheetSubmissions.forEach(sub => {
-        const qScores = sub.evaluationResult?.questionScores || [];
-        qScores.forEach(q => {
-          const qNum = q.questionNumber || 'Unknown';
+      // Use gradingSchema if available, otherwise fall back to scanning submissions
+      let gradingSchema = assignment.gradingSchema;
 
-          // Handle subsections if flattened or nested
-          if (q.subsections && q.subsections.length > 0) {
-            q.subsections.forEach(subSec => {
-              const subsecNum = subSec.subsectionNumber || '';
+      // Robustly parse gradingSchema
+      // Handle case where it might be double-stringified or a string
+      if (typeof gradingSchema === 'string') {
+        try {
+          gradingSchema = JSON.parse(gradingSchema);
+          console.log('[Excel Export] Parsed gradingSchema from string');
 
-              // Format the key to match the format used in defineQuestionColumns
-              let formattedKey;
-              if (/^\d+$/.test(subsecNum)) {
-                // Numeric subsection: use dot notation (1.1, 1.2, etc.)
-                formattedKey = `${qNum}.${subsecNum}`;
-              } else if (subsecNum) {
-                // Letter or roman numeral: use parentheses (1(a), 1(b), etc.)
-                formattedKey = `${qNum}(${subsecNum})`;
-              } else {
-                // No subsection number, just use question number
-                formattedKey = qNum;
-              }
+          // Check if it's still a string (double encoded)
+          if (typeof gradingSchema === 'string') {
+            try {
+              gradingSchema = JSON.parse(gradingSchema);
+              console.log('[Excel Export] Parsed double-encoded gradingSchema');
+            } catch (e2) {
+              console.warn('[Excel Export] Failed to parse double-encoded schema:', e2);
+            }
+          }
+        } catch (e) {
+          console.error('[Excel Export] Failed to parse gradingSchema string:', e);
+          gradingSchema = null;
+        }
+      }
 
-              questionKeys.add(formattedKey);
-              if (subSec.maxScore) questionMaxScores.set(formattedKey, subSec.maxScore);
-            });
+      // Check if wrapped in another object (e.g. { gradingSchema: { ... } })
+      if (gradingSchema && gradingSchema.gradingSchema) {
+        gradingSchema = gradingSchema.gradingSchema;
+      }
+
+      // Helper function to recursively extract all task/subtask IDs from gradingSchema
+      function extractSchemaColumns(tasks, parentPrefix = '') {
+        if (!tasks || !Array.isArray(tasks)) {
+          console.warn('[Excel Export] Invalid tasks array in extractSchemaColumns');
+          return;
+        }
+
+        tasks.forEach(task => {
+          // Use sub_task_id or subTaskId if available, otherwise task_id or taskId
+          // Handle cases where ID might be int, convert to string
+          const taskId = String(task.sub_task_id || task.subTaskId || task.task_id || task.taskId || '').trim();
+
+          // Check for subtasks using both snake_case and camelCase
+          // Also handle 'sub_tasks' being a string "[...]"
+          let subTasks = task.sub_tasks || task.subTasks;
+          if (typeof subTasks === 'string') {
+            try { subTasks = JSON.parse(subTasks); } catch (e) { }
+          }
+
+          // Check if this task has sub_tasks - if so, only process the sub_tasks
+          if (subTasks && Array.isArray(subTasks) && subTasks.length > 0) {
+            console.log(`[Excel Export] Found ${subTasks.length} subtasks for Task ${taskId}`);
+            // Recursively process sub_tasks
+            extractSchemaColumns(subTasks, '');
           } else {
-            const key = qNum;
-            questionKeys.add(key);
-            if (q.maxScore) questionMaxScores.set(key, q.maxScore);
+          // This is a leaf task (no sub_tasks) - add it as a column
+          if (taskId) {
+            // Normalize the schema key to canonical dot notation
+            const normalizedKey = normalizeSchemaKey(taskId);
+            console.log(`[Excel Export] Adding column for Task ${taskId} -> ${normalizedKey}`);
+            questionKeys.add(normalizedKey);
+            const marks = task.marks || task.max_marks || task.maxMarks || 0;
+            if (marks > 0) {
+              questionMaxScores.set(normalizedKey, marks);
+            }
+          }
           }
         });
+      }
 
-        // Also check lostMarks for keys that might exist but have 0 score
-        const lostMarks = sub.evaluationResult?.lostMarks || [];
-        lostMarks.forEach(lm => {
-          if (lm.area) questionKeys.add(lm.area);
+      // Locate the 'tasks' array
+      let schemaTasks = null;
+      if (gradingSchema) {
+        schemaTasks = gradingSchema.tasks || gradingSchema.Tasks;
+        // Handle if tasks is inside 'data' or similar
+        if (!schemaTasks && gradingSchema.data) {
+          schemaTasks = gradingSchema.data.tasks || gradingSchema.data.Tasks;
+        }
+      }
+
+      if (schemaTasks && Array.isArray(schemaTasks)) {
+        console.log('[Excel Export] Using gradingSchema for column headers');
+        extractSchemaColumns(schemaTasks);
+        console.log(`[Excel Export] Extracted ${questionKeys.size} task columns from schema`);
+      } else {
+        // Fallback: scan submissions if no gradingSchema (for backward compatibility)
+        console.log('[Excel Export] No valid gradingSchema found (tasks array missing), falling back to submission scanning');
+        sheetSubmissions.forEach(sub => {
+          const qScores = sub.evaluationResult?.questionScores || [];
+          qScores.forEach(q => {
+            let qNum = String(q.questionNumber || 'Unknown').replace(/^Task\s*/i, '');
+
+            // Fix for "Task 1 (1)" issue: if qNum is simple integer "1", check if we have "1.1" etc.
+            // Actually, we can't know globally here easily.
+            // But we can robustify normalizeSubtaskKey usage.
+
+            // Handle subsections if flattened or nested
+            if (q.subsections && q.subsections.length > 0) {
+              q.subsections.forEach(subSec => {
+                const subsecNum = subSec.subsectionNumber || '';
+
+                // Use consistent normalization to prevent duplicates
+                const formattedKey = normalizeSubtaskKey(qNum, subsecNum);
+
+                questionKeys.add(formattedKey);
+                if (subSec.maxScore) questionMaxScores.set(formattedKey, subSec.maxScore);
+              });
+            } else {
+              const key = qNum;
+              // If key looks like "34.2" but should be "3.4.2", we might need heuristics?
+              // But relying on Schema is the real fix.
+              questionKeys.add(key);
+              if (q.maxScore) questionMaxScores.set(key, q.maxScore);
+            }
+          });
         });
-      });
+      }
 
       // Sort keys naturally (1.1, 1.2, 2.1 ...)
       const sortedKeys = Array.from(questionKeys).sort((a, b) => {
         return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
       });
 
+      console.log('[Excel Export] Sorted column keys:', sortedKeys);
+
       // --- 2. Define Columns ---
-      // Structure: Student Name | Student ID | Total Score | Overall Feedback | Task 1.1 | Task 1.2 ...
+      // Structure: Student Name | Student ID | Total Score | Task 1.1 | Task 1.2 ... | Deductions | Strengths | Areas for Improvement
       const columns = [
         { header: 'Student Name', key: 'studentName', width: 25 },
         { header: 'Student ID', key: 'studentId', width: 15 },
         { header: 'Total Score', key: 'totalScore', width: 12 },
-        { header: 'Overall Feedback', key: 'feedback', width: 50, style: { alignment: { wrapText: true } } },
       ];
 
+      // Add all task/question columns
       sortedKeys.forEach(key => {
         const maxScore = questionMaxScores.get(key) || 0;
         const headerText = maxScore > 0 ? `Task ${key} (${maxScore})` : `Task ${key}`;
         columns.push({ header: headerText, key: `q_${key}`, width: 10 });
       });
+
+      // Add Deductions column after all task columns
+      columns.push({ header: 'Deductions', key: 'deductions', width: 80, style: { alignment: { wrapText: true } } });
+
+      // Add Strengths and Areas for Improvement columns at the end
+      columns.push({ header: 'Strengths', key: 'strengths', width: 50, style: { alignment: { wrapText: true } } });
+      columns.push({ header: 'Areas for Improvement', key: 'areasForImprovement', width: 50, style: { alignment: { wrapText: true } } });
 
       worksheet.columns = columns;
 
@@ -1619,54 +1872,76 @@ exports.exportToExcel = async (req, res) => {
           totalScore: sub.evaluationResult?.overallGrade || 0
         };
 
-        // Construct "Deductions" style feedback
-        // "Task 1.1 (-1): Reason | Task 1.2 (-0.5): Reason"
-        const deductions = [];
+        // Populate single deductions column with formatted text
         const lostMarks = sub.evaluationResult?.lostMarks || [];
+        const validDeductions = lostMarks.filter(lm => lm.pointsLost > 0);
 
-        lostMarks.forEach(lm => {
-          if (lm.pointsLost > 0) {
-            deductions.push(`${lm.area} (-${lm.pointsLost}): ${lm.reason}`);
-          }
-        });
+        console.log(`\n[Excel Export] Student: ${sub.studentName} (${sub.studentId})`);
+        console.log(`  Total lostMarks entries: ${lostMarks.length}`);
+        console.log(`  Valid deductions (>0 points): ${validDeductions.length}`);
 
-        if (deductions.length > 0) {
-          rowData.feedback = deductions.join(' | \n');
+        if (validDeductions.length > 0) {
+          console.log(`  Deductions:`);
+          validDeductions.forEach((d, idx) => {
+            console.log(`    ${idx + 1}. ${d.area}: -${d.pointsLost} - ${d.reason?.substring(0, 50)}...`);
+          });
+
+          // Format: "Task 3.2.1 (-3): coding was missing."
+          const deductionStrings = validDeductions.map(d => {
+            const section = d.area || 'Unknown';
+            const marks = d.pointsLost || 0;
+            const reason = d.reason || 'No reason provided';
+            // Clean up "because" if it's already in the reason
+            const cleanReason = reason.toLowerCase().startsWith('because ')
+              ? reason.substring(8)
+              : reason;
+            return `Task ${section} (-${marks}): ${cleanReason}`;
+          });
+          rowData.deductions = deductionStrings.join('; ');
+          console.log(`  Final deductions string: ${rowData.deductions.substring(0, 100)}...`);
         } else {
-          rowData.feedback = "Excellent work! Full marks.";
+          rowData.deductions = ''; // Empty for perfect scores
+          console.log(`  No deductions (perfect score or no lost marks data)`);
         }
 
         // Populate Question/Task Scores
-        // We need to map from sub.evaluationResult.questionScores to the keys
+        // We need to map from sub.evaluationResult.questionScores to the keys from gradingSchema
         const qScores = sub.evaluationResult?.questionScores || [];
         const scoreMap = new Map();
 
         qScores.forEach(q => {
-          const qNum = q.questionNumber || 'Unknown';
+          const qNum = String(q.questionNumber || 'Unknown').replace(/^Task\s*/i, '');
 
           if (q.subsections && q.subsections.length > 0) {
             q.subsections.forEach(s => {
               const subsecNum = s.subsectionNumber || '';
 
-              // Format the key the same way as in the key collection phase
-              let formattedKey;
-              if (/^\d+$/.test(subsecNum)) {
-                // Numeric subsection: use dot notation (1.1, 1.2, etc.)
-                formattedKey = `${qNum}.${subsecNum}`;
-              } else if (subsecNum) {
-                // Letter or roman numeral: use parentheses (1(a), 1(b), etc.)
-                formattedKey = `${qNum}(${subsecNum})`;
-              } else {
-                // No subsection number, just use question number
-                formattedKey = qNum;
-              }
+              // Generate the full task ID by combining question number with subsection
+              // The subsectionNumber can be:
+              // - Simple: "1", "2", "3" -> becomes qNum.1, qNum.2, qNum.3 (e.g., "3.1")
+              // - Nested: "2.1", "3.2" -> becomes qNum.2.1, qNum.3.2 (e.g., "3.2.1")
+              // We should NOT use subsectionNumber directly as it's relative to the question
 
+              const formattedKey = normalizeSubtaskKey(qNum, subsecNum);
               scoreMap.set(formattedKey, s.earnedScore);
+
+              // Also set the subsectionNumber directly ONLY if it already starts with the question number
+              // This handles cases where the evaluation returns full IDs like "3.2.1" under question "3"
+              if (subsecNum && subsecNum.startsWith(qNum + '.')) {
+                scoreMap.set(subsecNum, s.earnedScore);
+              }
             });
           } else {
+            // Question without subsections - use question number as key
             scoreMap.set(qNum, q.earnedScore);
           }
         });
+
+        // Log mapping for debugging
+        console.log(`[Excel Export] Student ${sub.studentId}: scoreMap has ${scoreMap.size} entries`);
+        if (scoreMap.size > 0) {
+          console.log(`  - Sample keys: ${Array.from(scoreMap.keys()).slice(0, 5).join(', ')}`);
+        }
 
         sortedKeys.forEach(key => {
           if (scoreMap.has(key)) {
@@ -1681,16 +1956,69 @@ exports.exportToExcel = async (req, res) => {
           }
         });
 
+        // Add Strengths and Areas for Improvement
+        const strengths = sub.evaluationResult?.strengths || [];
+        const areasForImprovement = sub.evaluationResult?.areasForImprovement || [];
+
+        // Format as bullet points or numbered list
+        if (Array.isArray(strengths) && strengths.length > 0) {
+          rowData.strengths = strengths.map((s, idx) => `${idx + 1}. ${s}`).join('\n');
+        } else if (typeof strengths === 'string') {
+          rowData.strengths = strengths;
+        } else {
+          rowData.strengths = '';
+        }
+
+        if (Array.isArray(areasForImprovement) && areasForImprovement.length > 0) {
+          rowData.areasForImprovement = areasForImprovement.map((a, idx) => `${idx + 1}. ${a}`).join('\n');
+        } else if (typeof areasForImprovement === 'string') {
+          rowData.areasForImprovement = areasForImprovement;
+        } else {
+          rowData.areasForImprovement = '';
+        }
+
         worksheet.addRow(rowData);
       });
 
       // Style Header
-      worksheet.getRow(1).font = { bold: true };
-      worksheet.getRow(1).fill = {
+      const headerRow = worksheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: 'FFE0E0E0' }
+        fgColor: { argb: 'FF4472C4' } // Blue header
       };
+      headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      headerRow.height = 30;
+
+      // Apply specific styling to Strengths and Areas for Improvement columns
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) { // Skip header row
+          const strengthsCell = row.getCell('strengths');
+          const areasCell = row.getCell('areasForImprovement');
+
+          // Enable text wrapping for these cells
+          strengthsCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+          areasCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+
+          // Add light background colors
+          if (strengthsCell.value) {
+            strengthsCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFE7F4E4' } // Light green for strengths
+            };
+          }
+
+          if (areasCell.value) {
+            areasCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFFF4E6' } // Light orange for areas for improvement
+            };
+          }
+        }
+      });
     };
 
     // Generate All Sheets
@@ -1880,6 +2208,8 @@ exports.exportToCsv = async (req, res) => {
     questionColumns.forEach(col => {
       headers.push(col.label);
     });
+    // Add single deductions column
+    headers.push('Deductions');
     headers.push('Total Score', 'Total Possible', 'Percentage', 'Strengths', 'Areas for Improvement');
     rows.push(headers);
 
@@ -1888,6 +2218,8 @@ exports.exportToCsv = async (req, res) => {
     questionColumns.forEach(col => {
       maxScoreRow.push(col.maxScore);
     });
+    // Add empty cell for deductions column (no max score for this)
+    maxScoreRow.push('');
     maxScoreRow.push(assignment.totalPoints || '', '', '', '', '');
     rows.push(maxScoreRow);
 
@@ -1946,6 +2278,27 @@ exports.exportToCsv = async (req, res) => {
 
         row.push(earnedScore);
       });
+
+      // Add single deductions column
+      const lostMarks = sub.evaluationResult?.lostMarks || [];
+      const validDeductions = lostMarks.filter(lm => lm.pointsLost > 0);
+
+      if (validDeductions.length > 0) {
+        // Format: "Task 3.2.1 (-3): coding was missing."
+        const deductionStrings = validDeductions.map(d => {
+          const section = d.area || 'Unknown';
+          const marks = d.pointsLost || 0;
+          const reason = d.reason || 'No reason provided';
+          // Clean up "because" if it's already in the reason
+          const cleanReason = reason.toLowerCase().startsWith('because ')
+            ? reason.substring(8)
+            : reason;
+          return `Task ${section} (-${marks}): ${cleanReason}`;
+        });
+        row.push(deductionStrings.join('; '));
+      } else {
+        row.push(''); // Empty for perfect scores
+      }
 
       // Add totals and overall feedback
       const totalEarned = sub.evaluationResult?.overallGrade || 0;
